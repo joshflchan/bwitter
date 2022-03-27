@@ -1,0 +1,1 @@
+Library to spend/use bweeth, and connect to your favorite mining node all you need is a private key xoxo (this is kinda sus ngl)
