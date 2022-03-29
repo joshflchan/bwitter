@@ -28,7 +28,9 @@ type Miner struct {
 	minerListenAddr string
 	numClients      int
 
-	peersList []*rpc.Client
+	peersList   []*rpc.Client
+	coordClient *rpc.Client
+	peerFailed  chan *rpc.Client
 }
 
 type MiningBlock struct {
@@ -42,9 +44,6 @@ type Transaction struct {
 	timestamp time.Time
 	tweet     string
 }
-
-var coordClient *rpc.Client
-var peerFailed chan *rpc.Client
 
 func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
 
@@ -62,60 +61,60 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 
 	go rpc.Accept(minerListener)
 
-	coordClient, err = rpc.Dial("tcp", m.coordAddress)
+	m.coordClient, err = rpc.Dial("tcp", m.coordAddress)
 	CheckErr(err, "Failed to establish connection between Miner and Coord")
 
-	initialJoin(m.peersList, m.numClients)
+	m.initialJoin(m.peersList, m.numClients)
 
 	return nil
 }
 
-func initialJoin(peersList []*rpc.Client, numClients int) {
-	newRequestedPeers := callCoordGetPeers(numClients)
-	peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
+func (m *Miner) initialJoin(peersList []*rpc.Client, numClients int) {
+	newRequestedPeers := m.callCoordGetPeers(numClients)
+	m.addNewMinerToPeersList(newRequestedPeers)
 
-	coordClient.Call("Coord.NotifyJoin", nil, nil)
+	m.coordClient.Call("Coord.NotifyJoin", nil, nil)
 
-	go maintainPeersList(peersList, numClients)
+	go m.maintainPeersList(peersList, numClients)
 }
 
-func maintainPeersList(peersList []*rpc.Client, numClients int) {
+func (m *Miner) maintainPeersList(peersList []*rpc.Client, numClients int) {
 
-	peerFailed = make(chan *rpc.Client)
+	m.peerFailed = make(chan *rpc.Client)
 
 	for {
 		select {
-		case failedClient := <-peerFailed:
-			peersList = removeFailedMiner(failedClient, peersList)
-			newRequestedPeers := callCoordGetPeers(1)
-			peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
+		case failedClient := <-m.peerFailed:
+			m.removeFailedMiner(failedClient)
+			newRequestedPeers := m.callCoordGetPeers(1)
+			m.addNewMinerToPeersList(newRequestedPeers)
 		default:
 			if len(peersList) < numClients {
-				newRequestedPeers := callCoordGetPeers(numClients - len(peersList))
-				peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
+				newRequestedPeers := m.callCoordGetPeers(numClients - len(peersList))
+				m.addNewMinerToPeersList(newRequestedPeers)
 			}
 		}
 	}
 }
 
-func removeFailedMiner(failedClient *rpc.Client, peersList []*rpc.Client) []*rpc.Client {
+func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
 
 	var newList []*rpc.Client
 
-	for _, miner := range peersList {
+	for _, miner := range m.peersList {
 		if failedClient != miner {
 			newList = append(newList, miner)
 		}
 	}
 
-	return newList
+	m.peersList = newList
 }
 
-func callCoordGetPeers(numRequested int) []string {
+func (m *Miner) callCoordGetPeers(numRequested int) []string {
 
 	var CoordGetPeerResponse CoordGetPeerResponse
 
-	err := coordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
+	err := m.coordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
 	if err != nil {
 		fmt.Println("unable to complete call to Coord.GetPeers")
 	}
@@ -123,7 +122,7 @@ func callCoordGetPeers(numRequested int) []string {
 	return CoordGetPeerResponse.PeerList
 }
 
-func addNewMinerToPeersList(newRequestedPeers []string, peersList []*rpc.Client) []*rpc.Client {
+func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 
 	//TODO: check for dups
 
@@ -137,8 +136,7 @@ func addNewMinerToPeersList(newRequestedPeers []string, peersList []*rpc.Client)
 
 		toAppend = append(toAppend, peerConnection)
 	}
-
-	return append(peersList, toAppend...)
+	m.peersList = append(m.peersList, toAppend...)
 }
 
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
