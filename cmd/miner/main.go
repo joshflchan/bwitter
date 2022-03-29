@@ -1,5 +1,46 @@
 package main
 
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+
+	"cs.ubc.ca/cpsc416/p2/bwitter/bwitter"
+)
+
+type MinerConfig struct {
+	CoordAddress    string
+	MinerListenAddr string
+	NumClients      int
+}
+
 func main() {
-	// Code for miner to start, prolly smth smth read from config smth smth call Miner.Start()
+
+	minerConfig := ReadConfig("../config/miner_config.json")
+
+	miner := bwitter.NewMiner()
+
+	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.NumClients)
+	CheckErr(err, "unable to start")
+
+}
+
+func ReadConfig(filepath string) *MinerConfig {
+	configFile := filepath
+	configData, err := ioutil.ReadFile(configFile)
+	CheckErr(err, "reading config file")
+
+	config := new(MinerConfig)
+	err = json.Unmarshal(configData, config)
+	CheckErr(err, "parsing config data")
+
+	return config
+}
+
+func CheckErr(err error, errfmsg string, fargs ...interface{}) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, errfmsg, fargs...)
+		os.Exit(1)
+	}
 }

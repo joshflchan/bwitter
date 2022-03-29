@@ -50,6 +50,10 @@ type Transaction struct {
 	Tweet     string
 }
 
+func NewMiner() *Miner {
+	return &Miner{}
+}
+
 func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
 
 	err := rpc.Register(m)
