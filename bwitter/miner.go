@@ -1,10 +1,8 @@
 package bwitter
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/rpc"
 	"os"
 	"time"
@@ -21,79 +19,103 @@ type PostResponse struct {
 }
 
 type CoordGetPeerResponse struct {
-}
-
-type MinerConfig struct {
-	CoordAddress string
+	PeerList []string
 }
 
 type Miner struct {
-	MinerConfig *MinerConfig
+	coordAddress string
+	numClients   int
+
+	peersList []*rpc.Client
 }
 
 var coordClient *rpc.Client
-var peersList []string
-var peerFailed chan string
+var peerFailed chan *rpc.Client
 
-func (m *Miner) Start() error {
+func (m *Miner) Start(coordAddress string, numClients int) error {
 
 	err := rpc.Register(m)
 	CheckErr(err, "Failed to register Miner")
 
-	m.MinerConfig = ReadConfig("../config/miner_config.json")
-	coordClient, err = rpc.Dial("tcp", m.MinerConfig.CoordAddress)
+	coordClient, err = rpc.Dial("tcp", coordAddress)
 	CheckErr(err, "Failed to establish connection between Miner and Coord")
 
-	go maintainPeersList()
+	initialJoin(m.peersList, numClients)
 
-	return errors.New("Not implemented")
+	return errors.New("not implemented")
 }
 
-func maintainPeersList() {
+func initialJoin(peersList []*rpc.Client, numClients int) {
+	newRequestedPeers := callCoordGetPeers(numClients)
+	peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
 
-	peerFailed = make(chan string)
+	coordClient.Call("Coord.NotifyJoin", nil, nil)
+
+	go maintainPeersList(peersList, numClients)
+}
+
+func maintainPeersList(peersList []*rpc.Client, numClients int) {
+
+	peerFailed = make(chan *rpc.Client)
 
 	for {
 		select {
-		case msg := <-peerFailed:
-			fmt.Println(msg)
-			// case where peer has failed
-			// remove the failed peer from peersList
-			// request new peers from Coord
-
+		case failedClient := <-peerFailed:
+			peersList = removeFailedMiner(failedClient, peersList)
+			newRequestedPeers := callCoordGetPeers(1)
+			peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
 		default:
-			if len(peersList) < 5 {
-				var CoordGetPeerResponse CoordGetPeerResponse
-
-				err := coordClient.Call("GetPeers", nil, &CoordGetPeerResponse)
-				if err != nil {
-					//TODO: whatdo
-				}
-
-				// get all addresses in response and replace the peerslist
-				// TODO: do we want to request a whole new set of peers each time, or do we want to only request a specific number?
+			if len(peersList) < numClients {
+				newRequestedPeers := callCoordGetPeers(numClients - len(peersList))
+				peersList = addNewMinerToPeersList(newRequestedPeers, peersList)
 			}
 		}
 	}
+}
 
+func removeFailedMiner(failedClient *rpc.Client, peersList []*rpc.Client) []*rpc.Client {
+
+	var newList []*rpc.Client
+
+	for _, miner := range peersList {
+		if failedClient != miner {
+			newList = append(newList, miner)
+		}
+	}
+
+	return newList
+}
+
+func callCoordGetPeers(numRequested int) []string {
+
+	var CoordGetPeerResponse CoordGetPeerResponse
+
+	err := coordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
+	if err != nil {
+		fmt.Println("unable to complete call to Coord.GetPeers")
+	}
+
+	return CoordGetPeerResponse.PeerList
+}
+
+func addNewMinerToPeersList(newRequestedPeers []string, peersList []*rpc.Client) []*rpc.Client {
+
+	//TODO: check for dups
+
+	for _, peer := range newRequestedPeers {
+		peerConnection, errr = rpc.Dial("tcp", peer)
+		if errr != nil {
+			continue
+		}
+
+	}
+
+	return append()
 }
 
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
-	return errors.New("Not implemented")
-}
-
-// The two below functions have been taken from a3
-func ReadConfig(filepath string) *MinerConfig {
-	configFile := filepath
-	configData, err := ioutil.ReadFile(configFile)
-	CheckErr(err, "reading config file")
-
-	config := new(MinerConfig)
-	err = json.Unmarshal(configData, config)
-	CheckErr(err, "parsing config data")
-
-	return config
+	return errors.New("not implemented")
 }
 
 func CheckErr(err error, errfmsg string, fargs ...interface{}) {
