@@ -29,6 +29,18 @@ type Miner struct {
 	peersList []*rpc.Client
 }
 
+type MiningBlock struct {
+	minerID      string
+	transactions []Transaction
+	nonce        string
+	prevHash     string
+}
+
+type Transaction struct {
+	timestamp time.Time
+	tweet     string
+}
+
 var coordClient *rpc.Client
 var peerFailed chan *rpc.Client
 
@@ -119,6 +131,11 @@ func addNewMinerToPeersList(newRequestedPeers []string, peersList []*rpc.Client)
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
 	return errors.New("not implemented")
+}
+
+// try a bunch of nonces on current block of transactions, as transactions change
+func mineBlock() {
+
 }
 
 func CheckErr(err error, errfmsg string, fargs ...interface{}) {
