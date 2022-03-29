@@ -147,7 +147,7 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 }
 
 // try a bunch of nonces on current block of transactions, as transactions change
-func mineBlock() {
+func (m *Miner) mineBlock() {
 
 }
 
