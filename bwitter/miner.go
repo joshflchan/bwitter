@@ -102,15 +102,18 @@ func addNewMinerToPeersList(newRequestedPeers []string, peersList []*rpc.Client)
 
 	//TODO: check for dups
 
+	var toAppend []*rpc.Client
+
 	for _, peer := range newRequestedPeers {
-		peerConnection, errr = rpc.Dial("tcp", peer)
-		if errr != nil {
+		peerConnection, err := rpc.Dial("tcp", peer)
+		if err != nil {
 			continue
 		}
 
+		toAppend = append(toAppend, peerConnection)
 	}
 
-	return append()
+	return append(peersList, toAppend...)
 }
 
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
