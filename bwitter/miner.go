@@ -3,6 +3,7 @@ package bwitter
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/rpc"
 	"os"
 	"time"
@@ -23,8 +24,9 @@ type CoordGetPeerResponse struct {
 }
 
 type Miner struct {
-	coordAddress string
-	numClients   int
+	coordAddress    string
+	minerListenAddr string
+	numClients      int
 
 	peersList []*rpc.Client
 }
@@ -44,17 +46,28 @@ type Transaction struct {
 var coordClient *rpc.Client
 var peerFailed chan *rpc.Client
 
-func (m *Miner) Start(coordAddress string, numClients int) error {
+func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
 
 	err := rpc.Register(m)
 	CheckErr(err, "Failed to register Miner")
 
-	coordClient, err = rpc.Dial("tcp", coordAddress)
+	m.coordAddress = coordAddress
+	m.minerListenAddr = minerListenAddr
+	m.numClients = numClients
+
+	minerListener, err := net.Listen("tcp", m.minerListenAddr)
+	if err != nil {
+		return err
+	}
+
+	go rpc.Accept(minerListener)
+
+	coordClient, err = rpc.Dial("tcp", m.coordAddress)
 	CheckErr(err, "Failed to establish connection between Miner and Coord")
 
-	initialJoin(m.peersList, numClients)
+	initialJoin(m.peersList, m.numClients)
 
-	return errors.New("not implemented")
+	return nil
 }
 
 func initialJoin(peersList []*rpc.Client, numClients int) {
