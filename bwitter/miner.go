@@ -27,8 +27,9 @@ type Miner struct {
 	coordAddress    string
 	minerListenAddr string
 	numClients      int
+	miningBlock     MiningBlock
+	peersList       []*rpc.Client
 
-	peersList   []*rpc.Client
 	coordClient *rpc.Client
 	peerFailed  chan *rpc.Client
 }
@@ -150,6 +151,17 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
 // try a bunch of nonces on current block of transactions, as transactions change
 func (m *Miner) mineBlock() {
+
+}
+
+// validate block has two parts
+// A) check proof of work hash actually corresponds to block
+// B) check transactions make sense
+func (m *Miner) validateBlock() {
+
+}
+
+func (m *Miner) validatePoW() {
 
 }
 
