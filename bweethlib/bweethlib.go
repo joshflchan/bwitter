@@ -16,7 +16,7 @@ type Bweeth struct {
 type NotifyChannel chan ResultStruct
 
 type ResultStruct struct {
-	txId      string
+	txId      string // this should be a combination of public key and timestamp
 	blockHash string
 }
 
@@ -63,4 +63,19 @@ func (b *Bweeth) Start(privateKey string, minerIPPort string, chCapacity int) (N
 	b.miner = rpc.NewClient(conn)
 
 	return b.notifyCh, nil
+}
+
+// Post  non-blocking request from the client
+// In case there is an underlying issue (for example, miner cannot be reached),
+// this should return an appropriate err value, otherwise err should be set to nil. Note that this call is non-blocking.
+// The returned value must be delivered asynchronously to the client via the notify-channel channel returned in the Start call.
+// The string (txId) is used to identify this request and associate the returned value with this request.
+func (b *Bweeth) Post(msg string) (string, error) {
+	return "asd", nil
+}
+
+// Stop Stops the Bweet instance and from delivering any results via the notify-channel.
+// This call always succeeds.
+func (b *Bweeth) Stop() {
+	b.miner.Close()
 }
