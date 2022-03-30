@@ -64,7 +64,7 @@ func NewMiner() *Miner {
 func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
 
 	err := rpc.Register(m)
-	CheckErr(err, "Failed to register Miner")
+	CheckErr(err, "Failed to register Miner: %v\n", err)
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
@@ -84,9 +84,13 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 	go rpc.Accept(minerListener)
 
 	m.CoordClient, err = rpc.Dial("tcp", m.CoordAddress)
-	CheckErr(err, "Failed to establish connection between Miner and Coord")
+	CheckErr(err, "Failed to establish connection between Miner and Coord: %v\n", err)
 
 	m.initialJoin(m.NumClients)
+
+	for {
+
+	}
 
 	return nil
 }
