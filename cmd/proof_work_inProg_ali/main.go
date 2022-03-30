@@ -1,74 +1,169 @@
-package main
-
-/*
-Implements the solution to assignment 1 for UBC CS 416 2017 W2.
-
-Usage:
-$ go run client.go [local UDP ip:port] [local TCP ip:port] [aserver UDP ip:port]
-
-Example:
-$ go run client.go 127.0.0.1:2020 127.0.0.1:3030 127.0.0.1:7070
-
-*/
+package bwitter
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	// TODO
+	"net"
+	"net/rpc"
+	"os"
+	"time"
 )
 
-/////////// Msgs used by both auth and fortune servers:
-
-// An error message from the server.
-type ErrMessage struct {
-	Error string
+type PostArgs struct {
+	MessageContents string
+	Timestamp       time.Time
+	PublicKey       string
+	SignedOperation string
 }
 
-/////////// Auth server msgs:
-
-// Message containing a nonce from auth-server.
-type NonceMessage struct {
-	Nonce string
-	N     int64 // PoW difficulty: number of zeroes expected at end of md5(nonce+secret)
+type PostResponse struct {
 }
 
-// Message containing an the secret value from client to auth-server.
-type SecretMessage struct {
-	Secret string
+type CoordGetPeerResponse struct {
+	PeerList []string
 }
 
-// Message with details for contacting the fortune-server.
-type FortuneInfoMessage struct {
-	FortuneServer string // TCP ip:port for contacting the fserver
-	FortuneNonce  int64
+type Miner struct {
+	coordAddress    string
+	minerListenAddr string
+	numClients      int
+	miningBlock     MiningBlock
+	peersList       []*rpc.Client
+
+	coordClient *rpc.Client
+	peerFailed  chan *rpc.Client
 }
 
-/////////// Fortune server msgs:
-
-// Message requesting a fortune from the fortune-server.
-type FortuneReqMessage struct {
-	FortuneNonce int64
+type MiningBlock struct {
+	minerID      string
+	transactions []Transaction
+	nonce        string
+	prevHash     string
 }
 
-// Response from the fortune-server containing the fortune.
-type FortuneMessage struct {
-	Fortune string
-	Rank    int64 // Rank of this client solution
+type Transaction struct {
+	timestamp time.Time
+	tweet     string
 }
 
-// Main workhorse method.
-func main() {
-	// TODO
-	fmt.Println("WIP")
-	// Use json.Marshal json.Unmarshal for encoding/decoding to servers
+func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
+
+	err := rpc.Register(m)
+	CheckErr(err, "Failed to register Miner")
+
+	m.coordAddress = coordAddress
+	m.minerListenAddr = minerListenAddr
+	m.numClients = numClients
+
+	minerListener, err := net.Listen("tcp", m.minerListenAddr)
+	if err != nil {
+		return err
+	}
+
+	go rpc.Accept(minerListener)
+
+	m.coordClient, err = rpc.Dial("tcp", m.coordAddress)
+	CheckErr(err, "Failed to establish connection between Miner and Coord")
+
+	m.initialJoin(m.peersList, m.numClients)
+
+	return nil
+}
+
+func (m *Miner) initialJoin(peersList []*rpc.Client, numClients int) {
+	newRequestedPeers := m.callCoordGetPeers(numClients)
+	m.addNewMinerToPeersList(newRequestedPeers)
+
+	m.coordClient.Call("Coord.NotifyJoin", nil, nil)
+
+	go m.maintainPeersList(peersList, numClients)
+}
+
+func (m *Miner) maintainPeersList(peersList []*rpc.Client, numClients int) {
+
+	m.peerFailed = make(chan *rpc.Client)
+
+	for {
+		select {
+		case failedClient := <-m.peerFailed:
+			m.removeFailedMiner(failedClient)
+			newRequestedPeers := m.callCoordGetPeers(1)
+			m.addNewMinerToPeersList(newRequestedPeers)
+		default:
+			if len(peersList) < numClients {
+				newRequestedPeers := m.callCoordGetPeers(numClients - len(peersList))
+				m.addNewMinerToPeersList(newRequestedPeers)
+			}
+		}
+	}
+}
+
+func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
+
+	var newList []*rpc.Client
+
+	for _, miner := range m.peersList {
+		if failedClient != miner {
+			newList = append(newList, miner)
+		}
+	}
+
+	m.peersList = newList
+}
+
+func (m *Miner) callCoordGetPeers(numRequested int) []string {
+
+	var CoordGetPeerResponse CoordGetPeerResponse
+
+	err := m.coordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
+	if err != nil {
+		fmt.Println("unable to complete call to Coord.GetPeers")
+	}
+
+	return CoordGetPeerResponse.PeerList
+}
+
+func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
+
+	//TODO: check for dups
+
+	var toAppend []*rpc.Client
+
+	for _, peer := range newRequestedPeers {
+		peerConnection, err := rpc.Dial("tcp", peer)
+		if err != nil {
+			continue
+		}
+
+		toAppend = append(toAppend, peerConnection)
+	}
+	m.peersList = append(m.peersList, toAppend...)
+}
+
+func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
+
+	return errors.New("not implemented")
+}
+
+// try a bunch of nonces on current block of transactions, as transactions change
+func (m *Miner) mineBlock() {
 
 }
 
-// Returns the MD5 hash as a hex string for the (nonce + secret) value.
-func computeNonceSecretHash(nonce string, secret string) string {
-	h := md5.New()
-	h.Write([]byte(nonce + secret))
-	str := hex.EncodeToString(h.Sum(nil))
-	return str
+// validate block has two parts
+// A) check proof of work hash actually corresponds to block
+// B) check transactions make sense
+func (m *Miner) validateBlock() {
+
+}
+
+func (m *Miner) validatePoW() {
+
+}
+
+func CheckErr(err error, errfmsg string, fargs ...interface{}) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, errfmsg, fargs...)
+		os.Exit(1)
+	}
 }

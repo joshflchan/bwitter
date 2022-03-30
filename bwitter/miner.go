@@ -1,9 +1,14 @@
 package bwitter
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/gob"
 	"fmt"
+	"math"
+	"math/big"
 	"net"
 	"net/rpc"
 	"os"
@@ -29,6 +34,8 @@ type Miner struct {
 	CoordAddress    string
 	MinerListenAddr string
 	NumClients      int
+	TargetBits      int
+	Target          *big.Int
 	MiningBlock     MiningBlock
 	PeersList       []*rpc.Client
 
@@ -41,7 +48,7 @@ type Miner struct {
 type MiningBlock struct {
 	MinerID      string
 	Transactions []Transaction
-	Nonce        string
+	Nonce        int64
 	PrevHash     string
 }
 
@@ -59,6 +66,12 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 	err := rpc.Register(m)
 	CheckErr(err, "Failed to register Miner")
 
+	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
+	// inspired by gochain
+	m.TargetBits = 10
+	m.Target = big.NewInt(1)
+	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
+
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.NumClients = numClients
@@ -73,21 +86,21 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 	m.CoordClient, err = rpc.Dial("tcp", m.CoordAddress)
 	CheckErr(err, "Failed to establish connection between Miner and Coord")
 
-	m.initialJoin(m.PeersList, m.NumClients)
+	m.initialJoin(m.NumClients)
 
 	return nil
 }
 
-func (m *Miner) initialJoin(peersList []*rpc.Client, numClients int) {
+func (m *Miner) initialJoin(numClients int) {
 	newRequestedPeers := m.callCoordGetPeers(numClients)
 	m.addNewMinerToPeersList(newRequestedPeers)
 
 	m.CoordClient.Call("Coord.NotifyJoin", nil, nil)
 
-	go m.maintainPeersList(peersList, numClients)
+	go m.maintainPeersList(numClients)
 }
 
-func (m *Miner) maintainPeersList(peersList []*rpc.Client, numClients int) {
+func (m *Miner) maintainPeersList(numClients int) {
 
 	m.PeerFailed = make(chan *rpc.Client)
 
@@ -98,8 +111,8 @@ func (m *Miner) maintainPeersList(peersList []*rpc.Client, numClients int) {
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default:
-			if len(peersList) < numClients {
-				newRequestedPeers := m.callCoordGetPeers(numClients - len(peersList))
+			if len(m.PeersList) < numClients {
+				newRequestedPeers := m.callCoordGetPeers(numClients - len(m.PeersList))
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
 		}
@@ -164,7 +177,38 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
 // try a bunch of nonces on current block of transactions, as transactions change
 func (m *Miner) mineBlock() {
+	var hashInteger big.Int
+	var hash [32]byte
 
+	nonce := int64(0)
+	for nonce < math.MaxInt64 {
+		m.MiningBlock.Nonce = nonce
+		// add lock here
+		blockBytes := m.convertBlockToBytes()
+		// unlock here
+		if blockBytes != nil {
+			hash = sha256.Sum256(blockBytes)
+			// Convert hash array to slice with [:]
+			hashInteger.SetBytes(hash[:])
+			// this will be true if the hash computed has the first m.TargetBits as 0
+			if hashInteger.Cmp(m.Target) == -1 {
+				break
+			}
+		}
+		nonce++
+	}
+	// value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
+	return
+}
+
+func (m *Miner) convertBlockToBytes() []byte {
+	var data bytes.Buffer
+	enc := gob.NewEncoder(&data)
+	err := enc.Encode(m.MiningBlock)
+	if err != nil {
+		return nil
+	}
+	return data.Bytes()
 }
 
 // validate block has two parts
@@ -174,8 +218,19 @@ func (m *Miner) validateBlock() {
 
 }
 
-func (m *Miner) validatePoW() {
+func (m *Miner) validatePoW(block MiningBlock, givenHash big.Int) bool {
+	var verifyHashInteger big.Int
+	var hash [32]byte
 
+	blockBytes := m.convertBlockToBytes()
+	hash = sha256.Sum256(blockBytes)
+	// Convert hash array to slice with [:]
+	verifyHashInteger.SetBytes(hash[:])
+	// Check if the hash given is the same as the hash generate from the block
+	if verifyHashInteger.Cmp(&givenHash) == 0 {
+		return true
+	}
+	return false
 }
 
 func CheckErr(err error, errfmsg string, fargs ...interface{}) {
