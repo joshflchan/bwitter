@@ -19,7 +19,6 @@ type PostArgs struct {
 	MessageContents string
 	Timestamp       time.Time
 	PublicKey       rsa.PublicKey
-	HashedMsg       []byte
 	SignedOperation []byte
 }
 
@@ -166,8 +165,17 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 }
 
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
+	msgBytes := []byte(postArgs.MessageContents)
+	// hash
+	msgHash := sha256.New()
+	_, err := msgHash.Write(msgBytes)
+	if err != nil {
+		panic(err)
+	}
+	msgHashSum := msgHash.Sum(nil)
+
 	// Attempt decryption
-	err := rsa.VerifyPSS(&postArgs.PublicKey, crypto.SHA256, postArgs.HashedMsg, postArgs.SignedOperation, nil)
+	err = rsa.VerifyPSS(&postArgs.PublicKey, crypto.SHA256, msgHashSum, postArgs.SignedOperation, nil)
 	CheckErr(err, "Failed to verify signature: %v\n", err)
 
 	// if decryption successful, create Transaction and add to list
