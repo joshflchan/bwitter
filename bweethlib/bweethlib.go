@@ -78,7 +78,6 @@ type PostArgs struct {
 	MessageContents string
 	Timestamp       time.Time
 	PublicKey       rsa.PublicKey
-	HashedMsg       []byte
 	SignedOperation []byte
 }
 type PostResponse struct {
@@ -126,7 +125,7 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	}
 
 	var reply PostResponse
-	b.miner.Call("Miner.Post", PostArgs{msg, now, b.privateKey.PublicKey, msgHashSum, signature}, &reply)
+	b.miner.Call("Miner.Post", PostArgs{msg, now, b.privateKey.PublicKey, signature}, &reply)
 
 	return "TODO: txId", nil
 }
