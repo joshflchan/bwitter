@@ -15,6 +15,7 @@ import (
 // usage:
 // go run cmd/gen/main.go -filename miner1
 
+// https://stackoverflow.com/questions/64104586/use-golang-to-get-rsa-key-the-same-way-openssl-genrsa
 func main() {
 	filename := flag.String("filename", "key", "")
 	flag.Parse()
