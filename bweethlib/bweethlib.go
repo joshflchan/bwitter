@@ -69,11 +69,14 @@ func (b *Bweeth) Start(privateKey *rsa.PrivateKey, minerIPPort string, chCapacit
 
 	b.miner = rpc.NewClient(conn)
 
+	log.Println("Bweeth Started.")
+
 	return b.notifyCh, nil
 }
 
 type PostArgs struct {
-	MessageContent  MessageContent
+	MessageContents string
+	Timestamp       time.Time
 	PublicKey       rsa.PublicKey
 	HashedMsg       []byte
 	SignedOperation []byte
@@ -95,7 +98,9 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	var network bytes.Buffer        // Stand-in for a network connection
 	enc := gob.NewEncoder(&network) // Will write to network.
 	// Encode (send) the value.
-	msgContent := MessageContent{msg, time.Now()}
+	now := time.Now()
+	msgContent := MessageContent{msg, now}
+	log.Println("msg", msgContent)
 	err := enc.Encode(msgContent)
 	if err != nil {
 		log.Fatal("encode error:", err)
@@ -121,7 +126,7 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	}
 
 	var reply PostResponse
-	b.miner.Call("Miner.Post", PostArgs{msgContent, b.privateKey.PublicKey, msgHashSum, signature}, &reply)
+	b.miner.Call("Miner.Post", PostArgs{msg, now, b.privateKey.PublicKey, msgHashSum, signature}, &reply)
 
 	return "TODO: txId", nil
 }

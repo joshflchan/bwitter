@@ -21,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	// generate key
-	key, err := rsa.GenerateKey(rand.Reader, 256)
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		log.Printf("Cannot generate RSA key\n")
 		return
