@@ -24,6 +24,10 @@ type PostArgs struct {
 
 type PostResponse struct {
 }
+type MessageContent struct {
+	Message   string
+	Timestamp time.Time
+}
 
 type CoordGetPeerResponse struct {
 	PeerList []string
@@ -165,10 +169,21 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 }
 
 func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
-	msgBytes := []byte(postArgs.MessageContents)
+	var network bytes.Buffer        // Stand-in for a network connection
+	enc := gob.NewEncoder(&network) // Will write to network.
+	// Encode (send) the value.
+	msgContent := MessageContent{postArgs.MessageContents, postArgs.Timestamp}
+	err := enc.Encode(msgContent)
+	if err != nil {
+		fmt.Println("encode error:", err)
+	}
+
+	// HERE ARE YOUR BYTES!!!!
+	msgBytes := network.Bytes()
+
 	// hash
 	msgHash := sha256.New()
-	_, err := msgHash.Write(msgBytes)
+	_, err = msgHash.Write(msgBytes)
 	if err != nil {
 		panic(err)
 	}
