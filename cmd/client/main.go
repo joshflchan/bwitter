@@ -28,10 +28,13 @@ M/Sw28ls6V6TD2kCEA2ALscJroe5Y/BNoFOJ8ao=
 	log.Println(key.N)
 
 	client := bweethlib.NewBweeth()
-	notifCh, err := client.Start("0x5318008", "127.0.0.1:1234", 3)
+	notifCh, err := client.Start(key, "127.0.0.1:1234", 3)
 	if err != nil {
 		log.Println(err)
+		return
 	}
+
+	client.Post("hello world")
 
 	for i := 0; i < 3; i++ {
 		result := <-notifCh
