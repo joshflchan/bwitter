@@ -99,12 +99,14 @@ type CoordNotifyJoinResponse struct {
 func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinResponse) error {
 	fmt.Println(args.IncomingMinerAddr + ": Coord.NotifyJoin received")
 
+	fmt.Println(args.IncomingMinerAddr + ": resolving MinerFcheckAddr")
 	minerFcheckAddr, err := net.ResolveUDPAddr("udp", args.MinerFcheckAddr)
 	if err != nil {
 		fmt.Println(args.IncomingMinerAddr + ": failed to resolve minerFcheckAddr")
 		return err
 	}
 
+	fmt.Println(args.IncomingMinerAddr + ": creating UDPConn for fcheck")
 	conn, err := c.createUDPConnOnRandomPort()
 	if err != nil {
 		fmt.Println(args.IncomingMinerAddr + ": failed to create coordFcheckAddr on random port")
@@ -112,6 +114,7 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 	}
 
 	// Add miner to MinerPool
+	fmt.Println(args.IncomingMinerAddr + ": adding miner to miner pool")
 	c.MinerPool[args.IncomingMinerAddr] = true
 	go c.fcheckMiner(conn, args.IncomingMinerAddr, minerFcheckAddr)
 	return nil
@@ -130,6 +133,7 @@ type AckMessage struct {
 }
 
 func (c *Coord) createUDPConnOnRandomPort() (*net.UDPConn, error) {
+	fmt.Println("Creating UDPConn on a random port for fcheck")
 	addressWithRandomPort := &net.UDPAddr{
 		Port: 0, // find random open port
 		IP:   net.ParseIP(c.CoordAddress),
