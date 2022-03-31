@@ -10,16 +10,16 @@ import (
 )
 
 type CoordConfig struct {
-	CoordListenAddress string
-	MinNumNeighbors    int16
+	CoordAddress           string
+	CoordRPCListenPort     string
+	MinNumNeighbors        int16
+	LostHeartbeatThreshold int8
 }
 
 func main() {
-	coordConfig := ReadConfig("../config/coord_config.json")
+	coordConfig := ReadConfig("config/coord_config.json")
 
-	coord := bwitter.NewCoord()
-
-	err := coord.Start(coordConfig.CoordListenAddress, coordConfig.MinNumNeighbors)
+	err := bwitter.StartCoord(coordConfig.CoordAddress, coordConfig.CoordRPCListenPort, coordConfig.MinNumNeighbors, coordConfig.LostHeartbeatThreshold)
 	CheckErr(err, "unable to start coord")
 }
 
