@@ -96,7 +96,7 @@ type CoordNotifyJoinArgs struct {
 type CoordNotifyJoinResponse struct {
 }
 
-func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinResponse) error {
+func (c *Coord) NotifyJoin(args CoordNotifyJoinArgs, response *CoordNotifyJoinResponse) error {
 	fmt.Println(args.IncomingMinerAddr + ": Coord.NotifyJoin received")
 
 	fmt.Println(args.IncomingMinerAddr + ": resolving MinerFcheckAddr")

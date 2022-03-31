@@ -6,13 +6,15 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/gob"
-	"fmt"
+	"log"
 	"math"
 	"math/big"
 	"net"
 	"net/rpc"
-	"os"
 	"time"
+
+	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
+	"cs.ubc.ca/cpsc416/p2/bwitter/util"
 )
 
 type PostArgs struct {
@@ -34,16 +36,15 @@ type CoordGetPeerResponse struct {
 }
 
 type Miner struct {
-	CoordAddress    string
-	MinerListenAddr string
-	NumClients      int
-	TargetBits      int
-	Target          *big.Int
-	MiningBlock     MiningBlock
-	PeersList       []*rpc.Client
-
-	CoordClient *rpc.Client
-	PeerFailed  chan *rpc.Client
+	CoordAddress     string
+	MinerListenAddr  string
+	ExpectedNumPeers int
+	TargetBits       int
+	Target           *big.Int
+	MiningBlock      MiningBlock
+	PeersList        []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
+	CoordClient      *rpc.Client
+	PeerFailed       chan *rpc.Client
 
 	TransactionsList []Transaction
 }
@@ -64,10 +65,12 @@ func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients int) error {
-
+func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers int, genesisBlock MiningBlock) error {
 	err := rpc.Register(m)
-	CheckErr(err, "Failed to register Miner: %v\n", err)
+	if err != nil {
+		log.Println("Failed to RPC register Miner")
+		return err
+	}
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
@@ -77,7 +80,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
-	m.NumClients = numClients
+	m.ExpectedNumPeers = expectedNumPeers
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -87,9 +90,15 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 	go rpc.Accept(minerListener)
 
 	m.CoordClient, err = rpc.Dial("tcp", m.CoordAddress)
-	CheckErr(err, "Failed to establish connection between Miner and Coord: %v\n", err)
+	if err != nil {
+		log.Println("Failed to establish connection between Miner and Coord")
+		return err
+	}
 
-	m.initialJoin(m.NumClients)
+	err = m.initialJoin(genesisBlock)
+	if err != nil {
+		log.Println("Failed Join Protocol")
+	}
 
 	for {
 
@@ -98,18 +107,47 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, numClients in
 	return nil
 }
 
-func (m *Miner) initialJoin(numClients int) {
-	newRequestedPeers := m.callCoordGetPeers(numClients)
+// TODO: what happens if gensis block already mined by a single node...
+// node goes down... and new node joins with no peers... does it mine the genesis block again? should coord keep track somehow?
+// or is it eventually handled once the new node reaches k peers and attempts to propagate a shorter chain? what happens after?
+func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
+	// Get peers from Coord and add to peersList
+	newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers)
 	m.addNewMinerToPeersList(newRequestedPeers)
 
-	m.CoordClient.Call("Coord.NotifyJoin", nil, nil)
+	// For genesis block -- Coord returns no peers
+	if len(m.PeersList) == 0 {
+		m.MiningBlock = genesisBlock
+		m.mineBlock()
+	} else {
+		// TODO: Get entire blockchain from a peer
 
-	go m.maintainPeersList(numClients)
+		// TODO: Perform validation on chain and store on disk
+	}
+	// Start fcheck to acknowledge heartbeats from Coord before notifying Coord of Join
+	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
+	if err != nil {
+		log.Println("Failed to start fcheck in listen only mode")
+		return err
+	}
+	// Notify Coord of Join
+	coordNotifyJoinArgs := CoordNotifyJoinArgs{
+		IncomingMinerAddr: m.MinerListenAddr,
+		MinerFcheckAddr:   fCheckAddrForCoord,
+	}
+	err = m.CoordClient.Call("Coord.NotifyJoin", coordNotifyJoinArgs, &CoordNotifyJoinResponse{})
+	if err != nil {
+		log.Println("Failed RPC call Coord.NotifyJoin")
+		return err
+	}
+
+	// Maintain peersList
+	go m.maintainPeersList()
+	return nil
 }
 
-func (m *Miner) maintainPeersList(numClients int) {
-
-	m.PeerFailed = make(chan *rpc.Client)
+func (m *Miner) maintainPeersList() {
+	m.PeerFailed = make(chan *rpc.Client) // initialize channel to detect failed peers
 
 	for {
 		select {
@@ -117,9 +155,9 @@ func (m *Miner) maintainPeersList(numClients int) {
 			m.removeFailedMiner(failedClient)
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
-		default:
-			if len(m.PeersList) < numClients {
-				newRequestedPeers := m.callCoordGetPeers(numClients - len(m.PeersList))
+		default: // continuously check for expected num peers to build robustness of network
+			if len(m.PeersList) < m.ExpectedNumPeers {
+				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - len(m.PeersList))
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
 		}
@@ -127,9 +165,7 @@ func (m *Miner) maintainPeersList(numClients int) {
 }
 
 func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
-
 	var newList []*rpc.Client
-
 	for _, miner := range m.PeersList {
 		if failedClient != miner {
 			newList = append(newList, miner)
@@ -140,29 +176,23 @@ func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
 }
 
 func (m *Miner) callCoordGetPeers(numRequested int) []string {
-
 	var CoordGetPeerResponse CoordGetPeerResponse
-
 	err := m.CoordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
 	if err != nil {
-		fmt.Println("unable to complete call to Coord.GetPeers")
+		log.Println("unable to complete call to Coord.GetPeers")
 	}
 
 	return CoordGetPeerResponse.PeerList
 }
 
 func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
-
 	//TODO: check for dups
-
 	var toAppend []*rpc.Client
-
 	for _, peer := range newRequestedPeers {
 		peerConnection, err := rpc.Dial("tcp", peer)
 		if err != nil {
 			continue
 		}
-
 		toAppend = append(toAppend, peerConnection)
 	}
 	m.PeersList = append(m.PeersList, toAppend...)
@@ -175,7 +205,7 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 	msgContent := MessageContent{postArgs.MessageContents, postArgs.Timestamp}
 	err := enc.Encode(msgContent)
 	if err != nil {
-		fmt.Println("encode error:", err)
+		log.Println("encode error:", err)
 	}
 
 	// HERE ARE YOUR BYTES!!!!
@@ -191,7 +221,11 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
 	// Attempt decryption
 	err = rsa.VerifyPSS(&postArgs.PublicKey, crypto.SHA256, msgHashSum, postArgs.SignedOperation, nil)
-	CheckErr(err, "Failed to verify signature: %v\n", err)
+	// CheckErr(err, "Failed to verify signature: %v\n", err)
+	if err != nil {
+		log.Println("Failed to verify signature for Post")
+		return err
+	}
 
 	// if decryption successful, create Transaction and add to list
 	transaction := Transaction{Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
@@ -254,15 +288,43 @@ func (m *Miner) validatePoW(block MiningBlock, givenHash big.Int) bool {
 	// Convert hash array to slice with [:]
 	verifyHashInteger.SetBytes(hash[:])
 	// Check if the hash given is the same as the hash generate from the block
-	if verifyHashInteger.Cmp(&givenHash) == 0 {
-		return true
-	}
-	return false
+	return verifyHashInteger.Cmp(&givenHash) == 0
 }
 
-func CheckErr(err error, errfmsg string, fargs ...interface{}) {
+func startFCheckListenOnly(nodeAddr string) (string, error) {
+	// start fcheck in responding mode before connecting to coord
+	fcheckInstance := fchecker.NewFcheck()
+
+	ackLocalIPAckLocalPort, err := util.GetUnusedPort(nodeAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, errfmsg, fargs...)
-		os.Exit(1)
+		return "", err
 	}
+
+	log.Println("Using node listen address to ack for fcheck:", ackLocalIPAckLocalPort)
+	_, fcheckErr := fcheckInstance.Start(
+		fchecker.StartStruct{
+			AckLocalIPAckLocalPort: ackLocalIPAckLocalPort,
+		})
+	if fcheckErr != nil {
+		return "", fcheckErr
+	}
+	log.Println("Successfully started fcheck in listen only mode!")
+	return ackLocalIPAckLocalPort, nil
 }
+
+// RPC call to peer node
+func (m *Miner) getExistingChainFromPeer() {
+	// TODO: Reading from disk
+	// config file should have filepath for blockchain on disk storage
+
+	// send entire chain in RPC repsonse
+}
+
+// COMMENTED OUT BEAUSE I THINK THIS SHOULD BE IN miner/main.go
+// START SHOULD JUST RETURN ERRORS AND PROPAGATE UP
+// func CheckErr(err error, errfmsg string, fargs ...interface{}) {
+// 	if err != nil {
+// 		log.Printf(os.Stderr, errfmsg, fargs...)
+// 		os.Exit(1)
+// 	}
+// }

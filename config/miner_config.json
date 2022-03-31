@@ -1,5 +1,11 @@
 {
     "CoordAddress": "127.0.0.1:1234",
     "MinerListenAddr": ":6969",
-    "NumClients": 5
+    "ExpectedNumPeers": 5,
+    "GenesisBlock": {
+        "MinerID": "0",
+        "Transactions": [],
+        "Nonce": 0,
+        "PrevHash": "0"
+    }
 }
