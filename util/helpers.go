@@ -8,17 +8,24 @@ import (
 	"os"
 )
 
+// addrToSplit: address used to generate random available port; if empty string, then uses local address of the caller
 func GetAddressWithUnusedPort(addrToSplit string) (string, error) {
-	// generate random port
-	addr, _, err := net.SplitHostPort(addrToSplit)
-	if err != nil {
-		// failed to split address
-		return "", err
+	var tempListener net.Listener
+	var listenErr error
+	if addrToSplit == "" { // uses local address of caller
+		tempListener, listenErr = net.Listen("tcp", ":0")
+	} else {
+		addr, _, err := net.SplitHostPort(addrToSplit)
+		if err != nil {
+			// failed to split address
+			return "", err
+		}
+		// otherwise uses given address in parameters
+		tempListener, listenErr = net.Listen("tcp", addr+":0")
 	}
-	tempListener, err := net.Listen("tcp", addr+":0")
-	if err != nil {
+	if listenErr != nil {
 		// failed to generate random port
-		return "", err
+		return "", listenErr
 	}
 	availableAddr := tempListener.Addr().String()
 	tempListener.Close()
