@@ -6,7 +6,7 @@
         "MinerID": "0",
         "Transactions": [],
         "Nonce": 0,
-        "PrevHash": 0,
-        "CurrentHash": 0
+        "PrevHash": "",
+        "CurrentHash": ""
     }
 }

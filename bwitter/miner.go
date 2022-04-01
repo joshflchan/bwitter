@@ -6,11 +6,14 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/gob"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"math"
 	"math/big"
 	"net"
 	"net/rpc"
+	"os"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
@@ -34,8 +37,8 @@ type MiningBlock struct {
 	MinerID      string
 	Transactions []Transaction
 	Nonce        int64
-	PrevHash     big.Int
-	CurrentHash  big.Int
+	PrevHash     string
+	CurrentHash  string
 }
 
 type Transaction struct {
@@ -221,39 +224,48 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 }
 
 // try a bunch of nonces on current block of transactions, as transactions change
+// Assumes m.MiningBlock is set externally
 func (m *Miner) mineBlock() {
 	for {
 		log.Println("Mining block: ", m.MiningBlock)
 		var hashInteger big.Int
+		// is 32 necessary? maybe to chop off excess
 		var hash [32]byte
-
+		// Is this necessary? Wouldn't this be done before?
+		m.MiningBlock.CurrentHash = ""
 		nonce := int64(0)
 		for nonce < math.MaxInt64 {
 			m.MiningBlock.Nonce = nonce
-			// add lock here
-			blockBytes := m.convertBlockToBytes()
-			// unlock here
+			// add lock here?
+			blockBytes := convertBlockToBytes(m.MiningBlock)
 			if blockBytes != nil {
 				hash = sha256.Sum256(blockBytes)
 				// Convert hash array to slice with [:]
 				hashInteger.SetBytes(hash[:])
 				// this will be true if the hash computed has the first m.TargetBits as 0
 				if hashInteger.Cmp(m.Target) == -1 {
+					m.MiningBlock.CurrentHash = hex.EncodeToString(hash[:])
 					break
 				}
+
 			}
+			// unlock here?
 			nonce++
 		}
 	}
+
 	// value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 	// and also probably call a function that appends the block to disk (on longest chain)
+	// unlock here?
 }
 
-func (m *Miner) convertBlockToBytes() []byte {
+func convertBlockToBytes(block MiningBlock) []byte {
 	var data bytes.Buffer
 	enc := gob.NewEncoder(&data)
-	err := enc.Encode(m.MiningBlock)
+	err := enc.Encode(block)
 	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 		return nil
 	}
 	return data.Bytes()
@@ -266,16 +278,21 @@ func (m *Miner) validateBlock() {
 
 }
 
-func (m *Miner) validatePoW(block MiningBlock, givenHash big.Int) bool {
-	var verifyHashInteger big.Int
-	var hash [32]byte
+func (m *Miner) validatePoW(block MiningBlock) bool {
+	var verifyComputedHashInteger big.Int
+	var computedHash [32]byte
+	var givenHash [32]byte
+	var givenHashInteger big.Int
 
-	blockBytes := m.convertBlockToBytes()
-	hash = sha256.Sum256(blockBytes)
+	copy(givenHash[:], block.CurrentHash)
+	block.CurrentHash = ""
+	blockBytes := convertBlockToBytes(block)
+	computedHash = sha256.Sum256(blockBytes)
 	// Convert hash array to slice with [:]
-	verifyHashInteger.SetBytes(hash[:])
+	verifyComputedHashInteger.SetBytes(computedHash[:])
+	givenHashInteger.SetBytes(givenHash[:])
 	// Check if the hash given is the same as the hash generate from the block
-	return verifyHashInteger.Cmp(&givenHash) == 0
+	return verifyComputedHashInteger.Cmp(&givenHashInteger) == 0
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
