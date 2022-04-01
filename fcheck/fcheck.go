@@ -88,7 +88,6 @@ func (f *Fcheck) Start(arg StartStruct) (notifyCh <-chan FailureDetected, err er
 	// Represent RTT in nanoseconds to accomodate super low latency
 	f.avgRTT = 3 * 1000 * 1000 * 1000
 
-	fmt.Println(arg)
 	// Check if we want to activate listen mode
 	if arg.AckLocalIPAckLocalPort != "" {
 		ackladdr, err := net.ResolveUDPAddr("udp", arg.AckLocalIPAckLocalPort)

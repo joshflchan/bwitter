@@ -114,11 +114,12 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// For genesis block -- Coord returns no peers
 	if len(m.PeersList) == 0 {
 		m.MiningBlock = genesisBlock
-		m.mineBlock()
 	} else {
 		// TODO: Get entire blockchain from a peer
 
 		// TODO: Perform validation on chain and store on disk
+
+		// TODO: Set m.MiningBlock
 	}
 	// Start fcheck to acknowledge heartbeats from Coord before notifying Coord of Join
 	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
@@ -132,14 +133,17 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 		MinerFcheckAddr:   fCheckAddrForCoord,
 	}
 	var joinResponse CoordNotifyJoinResponse
+	log.Println("JOIN PROTOCOL: Requesting join")
 	err = m.CoordClient.Call("Coord.NotifyJoin", joinArgs, &joinResponse)
 	if err != nil {
 		log.Println("Failed RPC call Coord.NotifyJoin")
 		return err
 	}
-
+	log.Println("JOIN PROTOCOL: Join complete!")
 	// Maintain peersList
 	go m.maintainPeersList()
+	// Start mining
+	go m.mineBlock()
 	return nil
 }
 
@@ -174,6 +178,7 @@ func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
 }
 
 func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
+	log.Println("JOIN PROTOCOL: Requesting peers")
 	var getPeersResponse CoordGetPeersResponse
 	getPeersArgs := CoordGetPeersArgs{
 		IncomingMinerAddr: m.MinerListenAddr,
@@ -240,6 +245,7 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 
 // try a bunch of nonces on current block of transactions, as transactions change
 func (m *Miner) mineBlock() {
+	log.Println("Mining block: ", m.MiningBlock)
 	var hashInteger big.Int
 	var hash [32]byte
 

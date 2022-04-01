@@ -1,7 +1,7 @@
 {
     "CoordAddress": "127.0.0.1:50081",
     "MinerListenAddr": ":6969",
-    "ExpectedNumPeers": 1,
+    "ExpectedNumPeers": 0,
     "GenesisBlock": {
         "MinerID": "0",
         "Transactions": [],

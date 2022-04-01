@@ -15,9 +15,8 @@ import (
 type Coord struct {
 	MinerPool map[string]bool
 
-	CoordAddress          string
-	CoordRPCListenAddress string
-	// MinNumNeighbors        int16
+	CoordAddress           string
+	CoordRPCListenAddress  string
 	lostHeartbeatThreshold uint8
 }
 
@@ -33,7 +32,6 @@ func StartCoord(coordAddress string, coordRPCListenPort string, minNumNeighbors 
 	c.MinerPool = make(map[string]bool)
 	c.CoordAddress = coordAddress
 	c.CoordRPCListenAddress = coordAddress + ":" + coordRPCListenPort
-	// c.MinNumNeighbors = minNumNeighbors
 	c.lostHeartbeatThreshold = lostHeartbeatThreshold
 
 	log.Println("Coord.Start: registering Coord for RPC")
@@ -99,16 +97,15 @@ type CoordNotifyJoinResponse struct {
 }
 
 func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinResponse) error {
+	log.Println("JOIN PROTOCOL: Acknowledge miner join")
 	log.Println(args.IncomingMinerAddr + ": Coord.NotifyJoin received")
-
-	log.Println(args.IncomingMinerAddr + ": resolving MinerFcheckAddr")
+	log.Println(args.MinerFcheckAddr + ": resolving MinerFcheckAddr")
 
 	// Add miner to MinerPool
 	log.Println(args.IncomingMinerAddr + ": adding miner to miner pool")
 	c.MinerPool[args.IncomingMinerAddr] = true
+	log.Println("Adding new miner to mining pool: ", c.MinerPool)
 
-	log.Println("JOIN PROTOCOL: Acknowledge miner join")
-	log.Println(args)
 	err := c.startFcheck(args)
 	if err != nil {
 		log.Println("Failed to start FCheck in Coord to monitor miner with ID:", args.IncomingMinerAddr)
@@ -141,7 +138,7 @@ func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
 	}
 
 	go c.monitorMiner(args.IncomingMinerAddr, notifyCh)
-	log.Println("Successfully started fcheck in coord!")
+	log.Println("Successfully started fcheck instance in coord for: ", args.IncomingMinerAddr)
 	return nil
 }
 
@@ -156,4 +153,5 @@ func (c *Coord) monitorMiner(minerAddr string, notifyCh <-chan fchecker.FailureD
 func (c *Coord) onMinerFailure(minerListenAddr string) {
 	log.Println(minerListenAddr + ": removing from pool")
 	delete(c.MinerPool, minerListenAddr)
+	log.Println("Removed complete. New mining pool: ", c.MinerPool)
 }
