@@ -12,13 +12,13 @@ import (
 type MinerConfig struct {
 	CoordAddress     string
 	MinerListenAddr  string
-	ExpectedNumPeers int
+	ExpectedNumPeers uint64
 	GenesisBlock     bwitter.MiningBlock
 }
 
 func main() {
 
-	minerConfig := ReadConfig("../config/miner_config.json")
+	minerConfig := ReadConfig("config/miner_config.json")
 
 	miner := bwitter.NewMiner()
 

@@ -13,7 +13,7 @@ type CoordConfig struct {
 	CoordAddress           string
 	CoordRPCListenPort     string
 	MinNumNeighbors        int16
-	LostHeartbeatThreshold int8
+	LostHeartbeatThreshold uint8
 }
 
 func main() {

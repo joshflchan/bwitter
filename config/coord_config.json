@@ -1,6 +1,5 @@
 {
     "CoordAddress": "127.0.0.1",
-    "CoordRPCListenPort": "1234",
-    "MinNumNeighbors": 3,
+    "CoordRPCListenPort": "50081",
     "LostHeartbeatThreshold": 3
 }

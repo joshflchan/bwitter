@@ -38,7 +38,7 @@ type CoordGetPeerResponse struct {
 type Miner struct {
 	CoordAddress     string
 	MinerListenAddr  string
-	ExpectedNumPeers int
+	ExpectedNumPeers uint64
 	TargetBits       int
 	Target           *big.Int
 	MiningBlock      MiningBlock
@@ -65,7 +65,7 @@ func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers int, genesisBlock MiningBlock) error {
+func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, genesisBlock MiningBlock) error {
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -87,8 +87,6 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 		return err
 	}
 
-	go rpc.Accept(minerListener)
-
 	m.CoordClient, err = rpc.Dial("tcp", m.CoordAddress)
 	if err != nil {
 		log.Println("Failed to establish connection between Miner and Coord")
@@ -101,10 +99,8 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	}
 
 	for {
-
+		rpc.Accept(minerListener)
 	}
-
-	return nil
 }
 
 // TODO: what happens if gensis block already mined by a single node...
@@ -131,11 +127,12 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 		return err
 	}
 	// Notify Coord of Join
-	coordNotifyJoinArgs := CoordNotifyJoinArgs{
+	joinArgs := CoordNotifyJoinArgs{
 		IncomingMinerAddr: m.MinerListenAddr,
 		MinerFcheckAddr:   fCheckAddrForCoord,
 	}
-	err = m.CoordClient.Call("Coord.NotifyJoin", coordNotifyJoinArgs, &CoordNotifyJoinResponse{})
+	var joinResponse CoordNotifyJoinResponse
+	err = m.CoordClient.Call("Coord.NotifyJoin", joinArgs, &joinResponse)
 	if err != nil {
 		log.Println("Failed RPC call Coord.NotifyJoin")
 		return err
@@ -156,8 +153,9 @@ func (m *Miner) maintainPeersList() {
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default: // continuously check for expected num peers to build robustness of network
-			if len(m.PeersList) < m.ExpectedNumPeers {
-				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - len(m.PeersList))
+			lenOfExistingPeerList := uint64(len(m.PeersList))
+			if lenOfExistingPeerList < m.ExpectedNumPeers {
+				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
 		}
@@ -175,14 +173,18 @@ func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
 	m.PeersList = newList
 }
 
-func (m *Miner) callCoordGetPeers(numRequested int) []string {
-	var CoordGetPeerResponse CoordGetPeerResponse
-	err := m.CoordClient.Call("Coord.GetPeers", numRequested, &CoordGetPeerResponse)
+func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
+	var getPeersResponse CoordGetPeersResponse
+	getPeersArgs := CoordGetPeersArgs{
+		IncomingMinerAddr: m.MinerListenAddr,
+		ExpectedNumPeers:  numRequested,
+	}
+	err := m.CoordClient.Call("Coord.GetPeers", getPeersArgs, &getPeersResponse)
 	if err != nil {
-		log.Println("unable to complete call to Coord.GetPeers")
+		log.Println("unable to complete call to Coord.GetPeers", err)
 	}
 
-	return CoordGetPeerResponse.PeerList
+	return getPeersResponse.NeighborAddrs
 }
 
 func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
@@ -295,7 +297,7 @@ func startFCheckListenOnly(nodeAddr string) (string, error) {
 	// start fcheck in responding mode before connecting to coord
 	fcheckInstance := fchecker.NewFcheck()
 
-	ackLocalIPAckLocalPort, err := util.GetUnusedPort(nodeAddr)
+	ackLocalIPAckLocalPort, err := util.GetAddressWithUnusedPort(nodeAddr)
 	if err != nil {
 		return "", err
 	}

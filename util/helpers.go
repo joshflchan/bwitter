@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func GetUnusedPort(addrToSplit string) (string, error) {
+func GetAddressWithUnusedPort(addrToSplit string) (string, error) {
 	// generate random port
 	addr, _, err := net.SplitHostPort(addrToSplit)
 	if err != nil {
