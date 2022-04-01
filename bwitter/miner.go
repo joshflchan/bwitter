@@ -11,29 +11,10 @@ import (
 	"math/big"
 	"net"
 	"net/rpc"
-	"time"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
 )
-
-type PostArgs struct {
-	MessageContents string
-	Timestamp       time.Time
-	PublicKey       rsa.PublicKey
-	SignedOperation []byte
-}
-
-type PostResponse struct {
-}
-type MessageContent struct {
-	Message   string
-	Timestamp time.Time
-}
-
-type CoordGetPeerResponse struct {
-	PeerList []string
-}
 
 type Miner struct {
 	CoordAddress     string
@@ -57,7 +38,7 @@ type MiningBlock struct {
 }
 
 type Transaction struct {
-	Timestamp time.Time
+	Timestamp string
 	Tweet     string
 }
 
@@ -205,32 +186,26 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 	m.PeersList = append(m.PeersList, toAppend...)
 }
 
-func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
-	var network bytes.Buffer        // Stand-in for a network connection
-	enc := gob.NewEncoder(&network) // Will write to network.
-	// Encode (send) the value.
-	msgContent := MessageContent{postArgs.MessageContents, postArgs.Timestamp}
-	err := enc.Encode(msgContent)
-	if err != nil {
-		log.Println("encode error:", err)
-	}
+// RPC Call for client
+func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error {
+	log.Println("POST msg received:", postArgs.MessageContents)
+	msgContent := postArgs.MessageContents + postArgs.Timestamp
 
 	// HERE ARE YOUR BYTES!!!!
-	msgBytes := network.Bytes()
+	// msgBytes := network.Bytes()
 
 	// hash
 	msgHash := sha256.New()
-	_, err = msgHash.Write(msgBytes)
+	_, err := msgHash.Write([]byte(msgContent))
 	if err != nil {
 		panic(err)
 	}
 	msgHashSum := msgHash.Sum(nil)
-
 	// Attempt decryption
 	err = rsa.VerifyPSS(&postArgs.PublicKey, crypto.SHA256, msgHashSum, postArgs.SignedOperation, nil)
 	// CheckErr(err, "Failed to verify signature: %v\n", err)
 	if err != nil {
-		log.Println("Failed to verify signature for Post")
+		log.Println("Failed to verify signature for Post", err)
 		return err
 	}
 
@@ -238,6 +213,7 @@ func (m *Miner) Post(postArgs *PostArgs, response *PostResponse) error {
 	transaction := Transaction{Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
 	m.TransactionsList = append(m.TransactionsList, transaction)
 
+	log.Println("tx:", transaction)
 	// propagate op [JOSH]
 
 	return nil
