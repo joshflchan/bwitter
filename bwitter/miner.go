@@ -34,7 +34,8 @@ type MiningBlock struct {
 	MinerID      string
 	Transactions []Transaction
 	Nonce        int64
-	PrevHash     string
+	PrevHash     big.Int
+	CurrentHash  big.Int
 }
 
 type Transaction struct {
@@ -221,29 +222,31 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 // try a bunch of nonces on current block of transactions, as transactions change
 func (m *Miner) mineBlock() {
-	log.Println("Mining block: ", m.MiningBlock)
-	var hashInteger big.Int
-	var hash [32]byte
+	for {
+		log.Println("Mining block: ", m.MiningBlock)
+		var hashInteger big.Int
+		var hash [32]byte
 
-	nonce := int64(0)
-	for nonce < math.MaxInt64 {
-		m.MiningBlock.Nonce = nonce
-		// add lock here
-		blockBytes := m.convertBlockToBytes()
-		// unlock here
-		if blockBytes != nil {
-			hash = sha256.Sum256(blockBytes)
-			// Convert hash array to slice with [:]
-			hashInteger.SetBytes(hash[:])
-			// this will be true if the hash computed has the first m.TargetBits as 0
-			if hashInteger.Cmp(m.Target) == -1 {
-				break
+		nonce := int64(0)
+		for nonce < math.MaxInt64 {
+			m.MiningBlock.Nonce = nonce
+			// add lock here
+			blockBytes := m.convertBlockToBytes()
+			// unlock here
+			if blockBytes != nil {
+				hash = sha256.Sum256(blockBytes)
+				// Convert hash array to slice with [:]
+				hashInteger.SetBytes(hash[:])
+				// this will be true if the hash computed has the first m.TargetBits as 0
+				if hashInteger.Cmp(m.Target) == -1 {
+					break
+				}
 			}
+			nonce++
 		}
-		nonce++
 	}
 	// value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-	return
+	// and also probably call a function that appends the block to disk (on longest chain)
 }
 
 func (m *Miner) convertBlockToBytes() []byte {
