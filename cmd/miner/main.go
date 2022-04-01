@@ -10,20 +10,20 @@ import (
 )
 
 type MinerConfig struct {
-	CoordAddress    string
-	MinerListenAddr string
-	NumClients      int
+	CoordAddress     string
+	MinerListenAddr  string
+	ExpectedNumPeers uint64
+	GenesisBlock     bwitter.MiningBlock
 }
 
 func main() {
 
-	minerConfig := ReadConfig("../config/miner_config.json")
+	minerConfig := ReadConfig("config/miner_config.json")
 
 	miner := bwitter.NewMiner()
 
-	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.NumClients)
+	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.ExpectedNumPeers, minerConfig.GenesisBlock)
 	CheckErr(err, "unable to start")
-
 }
 
 func ReadConfig(filepath string) *MinerConfig {

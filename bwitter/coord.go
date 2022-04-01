@@ -1,15 +1,15 @@
 package bwitter
 
 import (
-	"bytes"
-	"encoding/gob"
-	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"net/rpc"
-	"os"
 	"reflect"
 	"time"
+
+	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
+	"cs.ubc.ca/cpsc416/p2/bwitter/util"
 )
 
 type Coord struct {
@@ -17,66 +17,66 @@ type Coord struct {
 
 	CoordAddress           string
 	CoordRPCListenAddress  string
-	MinNumNeighbors        int16
-	lostHeartbeatThreshold int8
+	lostHeartbeatThreshold uint8
 }
 
 func NewCoord() *Coord {
 	return &Coord{}
 }
 
-func StartCoord(coordAddress string, coordRPCListenPort string, minNumNeighbors int16, lostHeartbeatThreshold int8) error {
-	fmt.Println("Coord.Start: begins")
+func StartCoord(coordAddress string, coordRPCListenPort string, minNumNeighbors int16, lostHeartbeatThreshold uint8) error {
+	log.Println("Coord.Start: begins")
 	c := NewCoord()
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	c.MinerPool = make(map[string]bool)
 	c.CoordAddress = coordAddress
 	c.CoordRPCListenAddress = coordAddress + ":" + coordRPCListenPort
-	c.MinNumNeighbors = minNumNeighbors
 	c.lostHeartbeatThreshold = lostHeartbeatThreshold
 
-	fmt.Println("Coord.Start: registering Coord for RPC")
+	log.Println("Coord.Start: registering Coord for RPC")
 	err := rpc.Register(c)
 	if err != nil {
-		fmt.Println("failed to register")
+		log.Println("failed to register")
 		return err
 	}
 
-	fmt.Println("Coord.Start: setting up RPC listener")
+	log.Println("Coord.Start: setting up RPC listener")
 	coordRPCListener, err := net.Listen("tcp", c.CoordRPCListenAddress)
 	if err != nil {
-		fmt.Println("failed to listen RPC")
+		log.Println(c.CoordRPCListenAddress)
+		log.Println("failed to listen RPC")
 		return err
 	}
-	go rpc.Accept(coordRPCListener)
-
-	fmt.Println("Coord.Start: finished")
-	return nil
+	log.Println("Coord.Start: finished")
+	for {
+		rpc.Accept(coordRPCListener)
+	}
 }
 
 // Coord.GetPeers
 type CoordGetPeersArgs struct {
 	IncomingMinerAddr string
+	ExpectedNumPeers  uint64
 }
 type CoordGetPeersResponse struct {
 	NeighborAddrs []string
 }
 
 func (c *Coord) GetPeers(args *CoordGetPeersArgs, response *CoordGetPeersResponse) error {
-	fmt.Println(args.IncomingMinerAddr + ": Coord.GetPeers received")
+	log.Println(args.IncomingMinerAddr + ": Coord.GetPeers received")
 
 	addrsToReturn := make(map[string]bool)
 	keys := reflect.ValueOf(c.MinerPool).MapKeys()
-	for i := int16(0); i < c.MinNumNeighbors && i < int16(len(c.MinerPool)); i++ {
+	for i := uint64(0); i < uint64(args.ExpectedNumPeers) && i < uint64(len(c.MinerPool)); i++ {
 		randomIndex := rand.Intn(len(c.MinerPool))
 		randomMinerAddr := keys[randomIndex].Interface().(string)
 
 		if randomMinerAddr == args.IncomingMinerAddr {
-			fmt.Println(args.IncomingMinerAddr + ": randomMinerAddr is same as requester")
+			log.Println(args.IncomingMinerAddr + ": randomMinerAddr is same as requester")
 			continue
 		} else if addrsToReturn[randomMinerAddr] {
-			fmt.Println(args.IncomingMinerAddr + ": randomMinerAddr has already been selected")
+			log.Println(args.IncomingMinerAddr + ": randomMinerAddr has already been selected")
 			continue
 		}
 		addrsToReturn[randomMinerAddr] = true
@@ -97,148 +97,61 @@ type CoordNotifyJoinResponse struct {
 }
 
 func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinResponse) error {
-	fmt.Println(args.IncomingMinerAddr + ": Coord.NotifyJoin received")
-
-	fmt.Println(args.IncomingMinerAddr + ": resolving MinerFcheckAddr")
-	minerFcheckAddr, err := net.ResolveUDPAddr("udp", args.MinerFcheckAddr)
-	if err != nil {
-		fmt.Println(args.IncomingMinerAddr + ": failed to resolve minerFcheckAddr")
-		return err
-	}
-
-	fmt.Println(args.IncomingMinerAddr + ": creating UDPConn for fcheck")
-	conn, err := c.createUDPConnOnRandomPort()
-	if err != nil {
-		fmt.Println(args.IncomingMinerAddr + ": failed to create coordFcheckAddr on random port")
-		return err
-	}
+	log.Println("JOIN PROTOCOL: Acknowledge miner join")
+	log.Println(args.IncomingMinerAddr + ": Coord.NotifyJoin received")
+	log.Println(args.MinerFcheckAddr + ": resolving MinerFcheckAddr")
 
 	// Add miner to MinerPool
-	fmt.Println(args.IncomingMinerAddr + ": adding miner to miner pool")
+	log.Println(args.IncomingMinerAddr + ": adding miner to miner pool")
 	c.MinerPool[args.IncomingMinerAddr] = true
-	go c.fcheckMiner(conn, args.IncomingMinerAddr, minerFcheckAddr)
+	log.Println("Adding new miner to mining pool: ", c.MinerPool)
+
+	err := c.startFcheck(args)
+	if err != nil {
+		log.Println("Failed to start FCheck in Coord to monitor miner with ID:", args.IncomingMinerAddr)
+		return err
+	}
 	return nil
 }
 
-// Heartbeat message.
-type HBeatMessage struct {
-	MinerListenAddr string // Identifies this fchecker instance/epoch.
-	SeqNum          uint64 // Unique for each heartbeat in an epoch.
-}
-
-// An ack message; response to a heartbeat.
-type AckMessage struct {
-	MinerListenAddr string // Copy of what was received in the heartbeat.
-	HBEatSeqNum     uint64 // Copy of what was received in the heartbeat.
-}
-
-func (c *Coord) createUDPConnOnRandomPort() (*net.UDPConn, error) {
-	fmt.Println("Creating UDPConn on a random port for fcheck")
-	addressWithRandomPort := &net.UDPAddr{
-		Port: 0, // find random open port
-		IP:   net.ParseIP(c.CoordAddress),
-	}
-	fcheckConn, err := net.ListenUDP("udp", addressWithRandomPort)
+func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
+	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(c.CoordRPCListenAddress)
 	if err != nil {
-		fmt.Println("failed to listen UDP")
-		return nil, err
+		log.Println("Failed to get random port for fcheck hBeatLocalAddr", err)
+		return err
 	}
-	return fcheckConn, nil
+
+	// Start Monitoring
+	fcheckInstance := fchecker.NewFcheck()
+
+	notifyCh, err := fcheckInstance.Start(
+		fchecker.StartStruct{
+			AckLocalIPAckLocalPort:       "",            // Ignore because we don't need the Coord to ACK heartbeats
+			EpochNonce:                   rand.Uint64(), //TODO: maybe change to miner address
+			HBeatLocalIPHBeatLocalPort:   hBeatLocalAddr,
+			HBeatRemoteIPHBeatRemotePort: args.MinerFcheckAddr,
+			LostMsgThresh:                c.lostHeartbeatThreshold,
+		})
+	if err != nil {
+		log.Println("Failed to start fcheck", err)
+		return err
+	}
+
+	go c.monitorMiner(args.IncomingMinerAddr, notifyCh)
+	log.Println("Successfully started fcheck instance in coord for: ", args.IncomingMinerAddr)
+	return nil
 }
 
-func (c *Coord) fcheckMiner(conn *net.UDPConn, minerListenAddr string, minerFcheckAddr *net.UDPAddr) {
-	fmt.Println(minerListenAddr + ": beginning fcheck to " + minerFcheckAddr.IP.String())
-	defer fmt.Println(minerListenAddr + ": stopping fcheck to " + minerFcheckAddr.IP.String())
-	defer conn.Close()
-
-	heartbeatSeqNum := uint64(0)
-	retries := int8(0)
-
-	hbWriteTimeMap := map[uint64]time.Time{}
-	lastRttNs := int64(3 * 1e9) // 3 seconds from nanoseconds
-	timeoutDuration := time.Duration(lastRttNs)
-
-	for {
-		heartbeatMessage := HBeatMessage{
-			MinerListenAddr: minerListenAddr,
-			SeqNum:          heartbeatSeqNum,
-		}
-		encodedHeartbeat := encode(heartbeatMessage)
-
-		fmt.Fprintln(os.Stdout, "Sending a heartbeat message: ", heartbeatMessage)
-		_, werr := conn.WriteToUDP(encodedHeartbeat, minerFcheckAddr)
-		if werr != nil {
-			fmt.Fprintln(os.Stderr, "Write error occured: ", werr)
-			return //notifyCh, errors.New("unable to write hbeat message")
-		}
-		hbWriteTimeMap[heartbeatSeqNum] = time.Now()
-		heartbeatSeqNum++
-
-		for {
-			recvBuf := make([]byte, 1024)
-			readStartTime := time.Now()
-			timeout := readStartTime.Add(timeoutDuration)
-			conn.SetReadDeadline(timeout)
-			len, _, err := conn.ReadFromUDP(recvBuf)
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				retries++
-				fmt.Fprintln(os.Stderr, "Reached the timeout with retries: ", timeoutDuration.Seconds(), retries)
-				if retries == c.lostHeartbeatThreshold {
-					fmt.Fprintln(os.Stderr, "Failure detected")
-					go c.onMinerFailure(minerListenAddr)
-					return
-				}
-				// If timed out and not met lost msg threshold, re-send heartbeat
-				break
-			}
-			readTimeUnixNs := time.Now().UnixNano()
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error reading Ack, retrying read: ", err)
-				actualReadTime := readStartTime.UnixNano() - readTimeUnixNs
-				timeoutDuration = time.Duration(timeoutDuration.Nanoseconds() - actualReadTime)
-				continue
-			}
-			ackMessage, err := decodeAckMessage(recvBuf, len)
-			if err != nil || ackMessage.MinerListenAddr != minerListenAddr {
-				fmt.Fprintln(os.Stderr, "Bad Ack, retrying read")
-				actualReadTime := readStartTime.UnixNano() - readTimeUnixNs
-				timeoutDuration = time.Duration(timeoutDuration.Nanoseconds() - actualReadTime)
-				continue
-			}
-
-			if writeTime, ok := hbWriteTimeMap[ackMessage.HBEatSeqNum]; ok {
-				// got a valid ack to a heartbeat
-				// calculate rtt
-				rtt := readTimeUnixNs - writeTime.UnixNano()
-				timeoutDuration = time.Duration((lastRttNs + rtt) / 2)
-				fmt.Println("Successful RTT, new timeout: ", timeoutDuration.Seconds())
-				delete(hbWriteTimeMap, ackMessage.HBEatSeqNum)
-				retries = 0
-				lastRttNs = rtt
-				// ready to send new heartbeats
-				break
-			}
-			fmt.Println("Seq num does not exist in map, retrying")
-		}
-	}
+func (c *Coord) monitorMiner(minerAddr string, notifyCh <-chan fchecker.FailureDetected) {
+	log.Println("MONITORING miner: ", minerAddr)
+	noti := <-notifyCh
+	log.Println(noti)
+	log.Println("fcheck detected failed miner: ", minerAddr)
+	c.onMinerFailure(minerAddr)
 }
 
 func (c *Coord) onMinerFailure(minerListenAddr string) {
-	fmt.Println(minerListenAddr + ": removing from pool")
+	log.Println(minerListenAddr + ": removing from pool")
 	delete(c.MinerPool, minerListenAddr)
-}
-
-func decodeAckMessage(buf []byte, len int) (AckMessage, error) {
-	var decoded AckMessage
-	err := gob.NewDecoder(bytes.NewBuffer(buf[0:len])).Decode(&decoded)
-	if err != nil {
-		return AckMessage{}, err
-	}
-	return decoded, nil
-}
-
-func encode(e interface{}) []byte {
-	var buf bytes.Buffer
-	gob.NewEncoder(&buf).Encode(e)
-	return buf.Bytes()
+	log.Println("Removed complete. New mining pool: ", c.MinerPool)
 }
