@@ -4,6 +4,7 @@
     "ExpectedNumPeers": 0,
     "GenesisBlock": {
         "MinerID": "0",
+        "SequenceNumber": "0",
         "Transactions": [],
         "Nonce": 0,
         "PrevHash": "",

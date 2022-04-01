@@ -17,6 +17,7 @@ import (
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
+	"github.com/jinzhu/copier"
 )
 
 type Miner struct {
@@ -34,6 +35,7 @@ type Miner struct {
 }
 
 type MiningBlock struct {
+	SequenceNum  int
 	MinerID      string
 	Transactions []Transaction
 	Nonce        int64
@@ -59,7 +61,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 10
+	m.TargetBits = 15
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -134,7 +136,6 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 
 func (m *Miner) maintainPeersList() {
 	m.PeerFailed = make(chan *rpc.Client) // initialize channel to detect failed peers
-
 	for {
 		select {
 		case failedClient := <-m.PeerFailed:
@@ -215,7 +216,11 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	// if decryption successful, create Transaction and add to list
 	transaction := Transaction{Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
+	// Not sure what this is for? Who uses that variable?
 	m.TransactionsList = append(m.TransactionsList, transaction)
+
+	// This is what we want so that it gets mined
+	m.MiningBlock.Transactions = append(m.MiningBlock.Transactions, transaction)
 
 	log.Println("tx:", transaction)
 	// propagate op [JOSH]
@@ -228,23 +233,21 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 func (m *Miner) mineBlock() {
 	for {
 		log.Println("Mining block: ", m.MiningBlock)
+		var block MiningBlock
 		var hashInteger big.Int
 		// is 32 necessary? maybe to chop off excess
 		var hash [32]byte
-		// Is this necessary? Wouldn't this be done before?
-		m.MiningBlock.CurrentHash = ""
 		nonce := int64(0)
 		for nonce < math.MaxInt64 {
-			m.MiningBlock.Nonce = nonce
-			// add lock here?
-			blockBytes := convertBlockToBytes(m.MiningBlock)
+			copier.Copy(&block, &m.MiningBlock)
+			block.Nonce = nonce
+			blockBytes := convertBlockToBytes(block)
 			if blockBytes != nil {
 				hash = sha256.Sum256(blockBytes)
-				// Convert hash array to slice with [:]
 				hashInteger.SetBytes(hash[:])
 				// this will be true if the hash computed has the first m.TargetBits as 0
 				if hashInteger.Cmp(m.Target) == -1 {
-					m.MiningBlock.CurrentHash = hex.EncodeToString(hash[:])
+					block.CurrentHash = hex.EncodeToString(hash[:])
 					break
 				}
 
@@ -252,11 +255,16 @@ func (m *Miner) mineBlock() {
 			// unlock here?
 			nonce++
 		}
-	}
+		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
+		// B) Probably call a function that appends the block to disk (on longest chain)
+		// C) Since not using locks anymore, need function to compare hashed transactions to actual, and keep the difference
 
-	// value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-	// and also probably call a function that appends the block to disk (on longest chain)
-	// unlock here?
+		oldSeqNum := block.SequenceNum            // -> this could probably encapsulated in function mentioned in part C
+		prevHash := block.CurrentHash             // -> this could probably encapsulated in function mentioned in part C
+		m.MiningBlock = MiningBlock{}             // -> this could probably encapsulated in function mentioned in part C
+		m.MiningBlock.SequenceNum = oldSeqNum + 1 // -> this could probably encapsulated in function mentioned in part C
+		m.MiningBlock.PrevHash = prevHash         // -> this could probably encapsulated in function mentioned in part C
+	}
 }
 
 func convertBlockToBytes(block MiningBlock) []byte {
