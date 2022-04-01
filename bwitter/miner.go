@@ -275,12 +275,13 @@ func convertBlockToBytes(block MiningBlock) []byte {
 // A) check proof of work hash actually corresponds to block
 // B) check transactions make sense
 func (m *Miner) validateBlock() {
-
+	// call validatePow
+	// call some function that checks transactions are valid using previous balances
 }
 
 func (m *Miner) validatePoW(block MiningBlock) bool {
-	var verifyComputedHashInteger big.Int
 	var computedHash [32]byte
+	var computedHashInteger big.Int
 	var givenHash [32]byte
 	var givenHashInteger big.Int
 
@@ -289,10 +290,10 @@ func (m *Miner) validatePoW(block MiningBlock) bool {
 	blockBytes := convertBlockToBytes(block)
 	computedHash = sha256.Sum256(blockBytes)
 	// Convert hash array to slice with [:]
-	verifyComputedHashInteger.SetBytes(computedHash[:])
+	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
 	// Check if the hash given is the same as the hash generate from the block
-	return verifyComputedHashInteger.Cmp(&givenHashInteger) == 0
+	return computedHashInteger.Cmp(&givenHashInteger) == 0
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
