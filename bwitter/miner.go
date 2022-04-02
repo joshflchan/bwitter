@@ -259,9 +259,9 @@ func (m *Miner) mineBlock() {
 		// B) Probably call a function that appends the block to disk (on longest chain)
 		// C) Since not using locks anymore, need function to compare hashed transactions to actual, and keep the difference
 
-		oldSeqNum := block.SequenceNum            // -> this could probably encapsulated in function mentioned in part C
-		prevHash := block.CurrentHash             // -> this could probably encapsulated in function mentioned in part C
-		m.MiningBlock = MiningBlock{}             // -> this could probably encapsulated in function mentioned in part C
+		oldSeqNum := block.SequenceNum // -> this could probably encapsulated in function mentioned in part C
+		prevHash := block.CurrentHash  // -> this could probably encapsulated in function mentioned in part C
+
 		m.MiningBlock.SequenceNum = oldSeqNum + 1 // -> this could probably encapsulated in function mentioned in part C
 		m.MiningBlock.PrevHash = prevHash         // -> this could probably encapsulated in function mentioned in part C
 	}
