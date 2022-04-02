@@ -17,7 +17,7 @@ type MinerConfig struct {
 }
 
 func main() {
-
+	// NOTE: MINERID in the config should be unique from other miners, maybe we use public key maybe something else
 	minerConfig := ReadConfig("config/miner_config.json")
 
 	miner := bwitter.NewMiner()
