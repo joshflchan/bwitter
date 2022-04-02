@@ -61,7 +61,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 15
+	m.TargetBits = 16
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -239,7 +239,7 @@ func (m *Miner) mineBlock() {
 		var hash [32]byte
 		nonce := int64(0)
 		for nonce < math.MaxInt64 {
-			copier.Copy(&block, &m.MiningBlock)
+			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
 			block.Nonce = nonce
 			blockBytes := convertBlockToBytes(block)
 			if blockBytes != nil {
@@ -248,6 +248,7 @@ func (m *Miner) mineBlock() {
 				// this will be true if the hash computed has the first m.TargetBits as 0
 				if hashInteger.Cmp(m.Target) == -1 {
 					block.CurrentHash = hex.EncodeToString(hash[:])
+					fmt.Println("MINED BLOCK: ", block)
 					break
 				}
 
@@ -257,14 +258,24 @@ func (m *Miner) mineBlock() {
 		}
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		// B) Probably call a function that appends the block to disk (on longest chain)
-		// C) Since not using locks anymore, need function to compare hashed transactions to actual, and keep the difference
-
-		oldSeqNum := block.SequenceNum // -> this could probably encapsulated in function mentioned in part C
-		prevHash := block.CurrentHash  // -> this could probably encapsulated in function mentioned in part C
-
-		m.MiningBlock.SequenceNum = oldSeqNum + 1 // -> this could probably encapsulated in function mentioned in part C
-		m.MiningBlock.PrevHash = prevHash         // -> this could probably encapsulated in function mentioned in part C
+		m.createNewMiningBlock(block)
 	}
+}
+
+func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
+	oldSeqNum := minedBlock.SequenceNum
+	prevHash := minedBlock.CurrentHash
+	missingTransactions := []Transaction{}
+	totalTransactions := len(m.MiningBlock.Transactions)
+	minedTransactions := len(minedBlock.Transactions)
+	if totalTransactions > minedTransactions {
+		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
+	}
+	m.MiningBlock = MiningBlock{}
+	m.MiningBlock.SequenceNum = oldSeqNum + 1
+	m.MiningBlock.PrevHash = prevHash
+	m.MiningBlock.MinerID = "1" // TODO READ FROM SOME GLOBAL TING
+	copy(m.MiningBlock.Transactions, missingTransactions)
 }
 
 func convertBlockToBytes(block MiningBlock) []byte {
@@ -287,6 +298,7 @@ func (m *Miner) validateBlock() {
 	// call some function that checks transactions are valid using previous balances
 }
 
+// Do we also wanna check difficulty?
 func (m *Miner) validatePoW(block MiningBlock) bool {
 	var computedHash [32]byte
 	var computedHashInteger big.Int
