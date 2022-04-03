@@ -9,5 +9,7 @@
         "Nonce": 0,
         "PrevHash": "",
         "CurrentHash": ""
-    }
+    },
+    "RetryPeerThreshold": 3,
+    "BlockchainOnDiskPath": "blockchain1.json"
 }

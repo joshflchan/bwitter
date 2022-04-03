@@ -10,10 +10,12 @@ import (
 )
 
 type MinerConfig struct {
-	CoordAddress     string
-	MinerListenAddr  string
-	ExpectedNumPeers uint64
-	GenesisBlock     bwitter.MiningBlock
+	CoordAddress         string
+	MinerListenAddr      string
+	ExpectedNumPeers     uint64
+	GenesisBlock         bwitter.MiningBlock
+	RetryPeerThreshold   uint8
+	BlockchainOnDiskPath string
 }
 
 func main() {
@@ -22,7 +24,7 @@ func main() {
 
 	miner := bwitter.NewMiner()
 
-	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.ExpectedNumPeers, minerConfig.GenesisBlock)
+	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.ExpectedNumPeers, minerConfig.GenesisBlock, minerConfig.BlockchainOnDiskPath, minerConfig.RetryPeerThreshold)
 	CheckErr(err, "unable to start")
 }
 
