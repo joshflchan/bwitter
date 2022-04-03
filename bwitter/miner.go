@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -30,6 +31,7 @@ type Miner struct {
 	PeersList        []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
 	CoordClient      *rpc.Client
 	PeerFailed       chan *rpc.Client
+	ChainStorageFile string
 
 	TransactionsList []Transaction
 }
@@ -52,7 +54,7 @@ func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, genesisBlock MiningBlock) error {
+func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock) error {
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -68,6 +70,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
+	m.ChainStorageFile = chainStorageFile
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -259,7 +262,39 @@ func (m *Miner) mineBlock() {
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		// B) Probably call a function that appends the block to disk (on longest chain)
 		m.createNewMiningBlock(block)
+		m.writeNewBlockToStorage(block)
 	}
+}
+
+func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	if _, err := os.Stat("out"); os.IsNotExist(err) {
+		if err := os.Mkdir("out", os.ModePerm); err != nil {
+			log.Printf("Unable to create dir ./out: %v\n", err)
+			return
+		}
+	}
+	marshalledBlock, err := json.Marshal(minedBlock)
+	if err != nil {
+		log.Println(err)
+	}
+
+	chainStoragePath := "out/" + m.ChainStorageFile
+
+	stringToWrite := string(marshalledBlock)
+	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
+		stringToWrite = ",\n" + stringToWrite
+	}
+
+	f, err := os.OpenFile(chainStoragePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(stringToWrite); err != nil {
+		log.Println(err)
+		return
+	}
+	fmt.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
 }
 
 func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {

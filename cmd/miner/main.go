@@ -13,6 +13,7 @@ type MinerConfig struct {
 	CoordAddress     string
 	MinerListenAddr  string
 	ExpectedNumPeers uint64
+	ChainStorageFile string
 	GenesisBlock     bwitter.MiningBlock
 }
 
@@ -22,7 +23,7 @@ func main() {
 
 	miner := bwitter.NewMiner()
 
-	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.ExpectedNumPeers, minerConfig.GenesisBlock)
+	err := miner.Start(minerConfig.CoordAddress, minerConfig.MinerListenAddr, minerConfig.ExpectedNumPeers, minerConfig.ChainStorageFile, minerConfig.GenesisBlock)
 	CheckErr(err, "unable to start")
 }
 
