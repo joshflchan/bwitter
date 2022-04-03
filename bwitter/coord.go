@@ -24,7 +24,7 @@ func NewCoord() *Coord {
 	return &Coord{}
 }
 
-func StartCoord(coordAddress string, coordRPCListenPort string, minNumNeighbors int16, lostHeartbeatThreshold uint8) error {
+func StartCoord(coordAddress string, coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 	log.Println("Coord.Start: begins")
 	c := NewCoord()
 	rand.Seed(time.Now().UTC().UnixNano())
