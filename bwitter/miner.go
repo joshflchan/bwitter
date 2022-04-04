@@ -66,7 +66,7 @@ type GetExistingChainResp struct {
 
 const OUTPUT_DIR = "out/"
 
-var InvalidChainError = errors.New("chain from peer was invalid")
+var ErrInvalidChain = errors.New("chain from peer was invalid")
 
 func NewMiner() *Miner {
 	return &Miner{}
@@ -81,7 +81,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 16
+	m.TargetBits = 18
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -132,7 +132,7 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	errTransfer := make(chan error, 1)
 	go m.startFileTransferServer(fileListenAddr, doneTransfer, errTransfer)
 
-	// ContinueJoinProtocol:
+ContinueJoinProtocol:
 	for { // Try all peers in peer list
 		if len(m.PeersList) > 0 {
 			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
@@ -141,13 +141,13 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 				err := m.callGetExistingChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer)
 				if err != nil {
 					log.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
-					if errors.Is(err, InvalidChainError) {
+					if errors.Is(err, ErrInvalidChain) {
 						log.Println("Removing peer from PeerList since given chain is invalid")
 						break
 					}
 					log.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerRpcClient)
 				} else {
-					break
+					break ContinueJoinProtocol
 				}
 			}
 			m.PeerFailed <- peerRpcClient
@@ -385,17 +385,14 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 	var givenHash [32]byte
 	var givenHashInteger big.Int
 
-	copy(givenHash[:], block.CurrentHash)
+	givenHashDecoded, _ := hex.DecodeString(block.CurrentHash)
+	copy(givenHash[:], givenHashDecoded)
 	block.CurrentHash = ""
-	log.Println("block!!!", *block)
 	blockBytes := convertBlockToBytes(*block)
 	computedHash = sha256.Sum256(blockBytes)
 	// Convert hash array to slice with [:]
 	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
-
-	log.Println("computed hash integer", computedHash)
-	log.Println("given hash integer", givenHash)
 
 	// Check if the hash given is the same as the hash generate from the block
 	return computedHashInteger.Cmp(&givenHashInteger) == 0
@@ -454,14 +451,15 @@ func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr s
 		log.Println("Got existing chain from peer")
 		select { // block until finish file transfer
 		case chainFileToValidate := <-doneTransfer:
-			defer os.Remove(chainFileToValidate)
 			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
 			if err == nil && isValid {
-				m.MiningBlock = *lastValidatedBlock
+				m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
 				return nil
 			} else if !isValid {
-				return InvalidChainError
+				os.Remove(chainFileToValidate) // remove temp file if invalid
+				return ErrInvalidChain
 			} else {
+				os.Remove(chainFileToValidate) // rmove temp file if error
 				return err
 			}
 		case err := <-errTransfer:
@@ -510,18 +508,18 @@ func (m *Miner) transferBlockchainFile(conn net.Conn, doneTransfer chan string, 
 
 func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bool, error) {
 	// TODO: Perform validation on chain and store on permanent path from config
-	file, err := os.Open(filepath)
+	src, err := os.Open(filepath)
 	log.Println("validating file at path:", filepath)
 	if err != nil {
 		return nil, false, err
 	}
-	defer file.Close()
+	defer src.Close()
 	// read line by line in case file large
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(src)
 	// Scan() reads next line and returns false when reached end or error
 	var blockToValidate *MiningBlock
 	for scanner.Scan() {
-		line := scanner.Text() // TODO: custom split because of commas
+		line := scanner.Text()
 		// process the line
 		blockLine := strings.TrimRight(line, ",\n")
 		log.Println("parse block line from file:", blockLine)
@@ -535,7 +533,7 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 			return nil, false, nil
 		}
 	}
-	// check if Scan() finished because of error or because it reached end of file
 	lastValidatedBlock := blockToValidate
-	return lastValidatedBlock, true, scanner.Err()
+	os.Rename(filepath, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+	return lastValidatedBlock, true, scanner.Err()     // check if Scan() finished because of error or because it reached end of file
 }
