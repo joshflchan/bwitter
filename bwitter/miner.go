@@ -33,6 +33,7 @@ type Miner struct {
 	CoordClient      *rpc.Client
 	PeerFailed       chan *rpc.Client
 	ChainStorageFile string
+	broadcastChannel chan MiningBlock
 
 	TransactionsList []Transaction
 }
@@ -72,6 +73,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
 	m.ChainStorageFile = chainStorageFile
+	m.broadcastChannel = make(chan MiningBlock)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -344,6 +346,32 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 		return
 	}
 	fmt.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
+}
+
+// Comments for josh:
+// You'd also need another function (probably goroutine) that receives broadcasted blocks from peers
+// it would do the validation
+// it would also update the block that is CURRENTLY being mined and see what transactions are missing
+// then it would and write it to the txt file,
+
+// this is goroutine that needs to be started somewhere
+func (m *Miner) broadcastMinedBlock() {
+	for {
+		select {
+		// case <-quitWrite:
+		// 		return
+		case block := <-m.broadcastChannel:
+			fmt.Println(block)
+			// trace.RecordAction(ClientMove(req)) thots thots?
+
+			// iterate through list of peers, conn.Write
+			// if peers are just addresses we would want conn.Dial first
+			// _, err = conn.Write(data.Bytes())
+			// if err != nil {
+			// 	continue
+			// }
+		}
+	}
 }
 
 func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
