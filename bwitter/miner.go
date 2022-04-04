@@ -38,6 +38,11 @@ type Miner struct {
 	TransactionsList []Transaction
 }
 
+type Transaction struct {
+	Timestamp string
+	Tweet     string
+}
+
 type MiningBlock struct {
 	SequenceNum  int
 	MinerID      string
@@ -47,9 +52,11 @@ type MiningBlock struct {
 	CurrentHash  string
 }
 
-type Transaction struct {
-	Timestamp string
-	Tweet     string
+type PropagateArgs struct {
+	Block MiningBlock
+}
+
+type PropagateResponse struct {
 }
 
 func NewMiner() *Miner {
@@ -199,6 +206,7 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 
 // RPC Call for client
 func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error {
+	// TODO: somewhere in here we should check if operation is seen already
 	log.Println("POST msg received:", postArgs.MessageContents)
 	msgContent := postArgs.MessageContents + postArgs.Timestamp
 
@@ -230,6 +238,11 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	log.Println("tx:", transaction)
 	// propagate op [JOSH]
+
+	var reply util.PostResponse
+	for _, peerConnection := range m.PeersList {
+		peerConnection.Call("Miner.Post", postArgs, &reply)
+	}
 
 	return nil
 }
@@ -371,6 +384,16 @@ func (m *Miner) broadcastMinedBlock() {
 			// 	continue
 			// }
 		}
+	}
+}
+
+func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) {
+	// Validate the block
+
+	// Propagate to peers
+	var reply PropagateResponse
+	for _, peerConnection := range m.PeersList {
+		peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
 	}
 }
 
