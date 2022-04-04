@@ -2,6 +2,7 @@
     "CoordAddress": "127.0.0.1:50081",
     "MinerListenAddr": ":6969",
     "ExpectedNumPeers": 0,
+    "ChainStorageFile": "chain.txt",
     "GenesisBlock": {
         "MinerID": "0",
         "SequenceNumber": "0",
@@ -10,6 +11,5 @@
         "PrevHash": "",
         "CurrentHash": ""
     },
-    "RetryPeerThreshold": 3,
-    "BlockchainOnDiskPath": "blockchain1.json"
+    "RetryPeerThreshold": 3
 }
