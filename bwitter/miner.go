@@ -34,6 +34,7 @@ type Miner struct {
 	PeerFailed       chan *rpc.Client
 	ChainStorageFile string
 	broadcastChannel chan MiningBlock
+	BlocksSeen       map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
 }
@@ -74,6 +75,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.ExpectedNumPeers = expectedNumPeers
 	m.ChainStorageFile = chainStorageFile
 	m.broadcastChannel = make(chan MiningBlock)
+	m.BlocksSeen = make(map[string]bool)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -403,11 +405,22 @@ func convertBlockToBytes(block MiningBlock) []byte {
 }
 
 // validate block has two parts
+// 0)? check if this hash has been seen already, short circuit if so
 // A) check proof of work hash actually corresponds to block
 // B) check transactions make sense
-func (m *Miner) validateBlock() {
+func (m *Miner) validateBlock(block MiningBlock) bool {
+	_, ok := m.BlocksSeen[block.CurrentHash]
+	if ok {
+		// seen this block already, ignore
+		return false
+	}
+	// we can mark as seen even if this block would be found invalid in the future
+	m.BlocksSeen[block.CurrentHash] = true
 	// call validatePow
 	// call some function that checks transactions are valid using previous balances
+
+	// if valid, return true
+	return true
 }
 
 // Do we also wanna check difficulty?
