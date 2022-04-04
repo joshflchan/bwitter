@@ -261,7 +261,6 @@ func (m *Miner) mineBlock() {
 			nonce++
 		}
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-		// B) Probably call a function that appends the block to disk (on longest chain)
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
 	}
