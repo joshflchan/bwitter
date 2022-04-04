@@ -195,6 +195,7 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 	//TODO: check for dups
 	var toAppend []*rpc.Client
 	for _, peer := range newRequestedPeers {
+		log.Println("NEW PEER: ", peer)
 		peerConnection, err := rpc.Dial("tcp", peer)
 		if err != nil {
 			continue
@@ -238,9 +239,10 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	log.Println("tx:", transaction)
 	// propagate op [JOSH]
-
+	log.Println("Propagating: ", postArgs)
 	var reply util.PostResponse
-	for _, peerConnection := range m.PeersList {
+	for i, peerConnection := range m.PeersList {
+		log.Printf("Propagating to peer %d: %v", i, postArgs)
 		peerConnection.Call("Miner.Post", postArgs, &reply)
 	}
 
@@ -278,6 +280,12 @@ func (m *Miner) mineBlock() {
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
+
+		var reply PropagateResponse
+		for i, peerConnection := range m.PeersList {
+			log.Printf("Propogate block to peer %d", i)
+			peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
+		}
 	}
 }
 
@@ -387,14 +395,21 @@ func (m *Miner) broadcastMinedBlock() {
 	}
 }
 
-func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) {
+func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
+	log.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
 
 	// Propagate to peers
 	var reply PropagateResponse
-	for _, peerConnection := range m.PeersList {
-		peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
+	for i, peerConnection := range m.PeersList {
+		log.Printf("Propogate to peer %d", i)
+		err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
+		if err != nil {
+			log.Println(err)
+		}
 	}
+
+	return nil
 }
 
 func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {

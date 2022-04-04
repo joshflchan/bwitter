@@ -37,7 +37,7 @@ Qs+WOs0V8wDRh3lylhdzE0waRofiDCnAhr7TzZc4rW/6
 	log.Println(key.N)
 
 	client := bweethlib.NewBweeth()
-	notifCh, err := client.Start(key, "127.0.0.1:6969", 3)
+	notifCh, err := client.Start(key, "127.0.0.1:8888", 3)
 	if err != nil {
 		log.Println(err)
 		return
