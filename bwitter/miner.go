@@ -75,6 +75,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.ExpectedNumPeers = expectedNumPeers
 	m.ChainStorageFile = chainStorageFile
 	m.broadcastChannel = make(chan MiningBlock)
+	m.BlocksSeen = make(map[string]bool)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
