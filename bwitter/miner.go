@@ -7,7 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"math/big"
@@ -30,6 +32,7 @@ type Miner struct {
 	PeersList        []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
 	CoordClient      *rpc.Client
 	PeerFailed       chan *rpc.Client
+	ChainStorageFile string
 	broadcastChannel chan MiningBlock
 
 	TransactionsList []Transaction
@@ -53,7 +56,7 @@ func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, genesisBlock MiningBlock) error {
+func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock) error {
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -69,6 +72,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
+	m.ChainStorageFile = chainStorageFile
 	m.broadcastChannel = make(chan MiningBlock)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
@@ -259,9 +263,89 @@ func (m *Miner) mineBlock() {
 			nonce++
 		}
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-		// B) Probably call a function that appends the block to disk (on longest chain)
 		m.createNewMiningBlock(block)
+		m.writeNewBlockToStorage(block)
 	}
+}
+
+func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock, error) {
+	fileHandle, err := os.Open("out/" + m.ChainStorageFile)
+	if err != nil {
+		log.Printf("The file ./out/"+m.ChainStorageFile+" does not exist: %v\n", err)
+		return nil, err
+	}
+	defer fileHandle.Close()
+
+	lastThresholdBlocks := make([]MiningBlock, threshold)
+
+	line := ""
+	var cursor int64 = 0
+	stat, _ := fileHandle.Stat()
+	filesize := stat.Size()
+	var recvdLines int = 0
+	for recvdLines < int(threshold) {
+		cursor -= 1
+		fileHandle.Seek(cursor, io.SeekEnd)
+
+		char := make([]byte, 1)
+		fileHandle.Read(char)
+
+		if cursor != -1 && (char[0] == 10 || char[0] == 13) { // stop if we find a line
+			recvdLines++
+			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			if err != nil {
+				log.Printf("Unable to unmarshal line %d from bottom of file\n", recvdLines)
+				return nil, err
+			}
+			line = ""
+			continue
+		}
+
+		line = fmt.Sprintf("%s%s", string(char), line) // there is more efficient way
+
+		if cursor == -filesize { // stop if we are at the begining
+			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			if err != nil {
+				log.Println("Unable to unmarshal first line from bottom of file")
+				return nil, err
+			}
+			break
+		}
+	}
+
+	validLinesRecvd := threshold - recvdLines
+	return lastThresholdBlocks[validLinesRecvd:], nil
+}
+
+func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	if _, err := os.Stat("out"); os.IsNotExist(err) {
+		if err := os.Mkdir("out", os.ModePerm); err != nil {
+			log.Printf("Unable to create dir ./out: %v\n", err)
+			return
+		}
+	}
+	marshalledBlock, err := json.Marshal(minedBlock)
+	if err != nil {
+		log.Println(err)
+	}
+
+	chainStoragePath := "out/" + m.ChainStorageFile
+
+	stringToWrite := string(marshalledBlock)
+	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
+		stringToWrite = "\n" + stringToWrite
+	}
+
+	f, err := os.OpenFile(chainStoragePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(stringToWrite); err != nil {
+		log.Println(err)
+		return
+	}
+	fmt.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
 }
 
 // Comments for josh:
