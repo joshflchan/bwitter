@@ -21,7 +21,6 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
-	"time"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
@@ -157,7 +156,6 @@ ContinueJoinProtocol:
 				}
 			}
 			m.PeerFailed <- peerRpcClient
-			time.Sleep(time.Second) // wait for peer to be removed before trying a new peer in the list
 		} else {
 			log.Println("No peers available... using genesis block")
 			m.MiningBlock = genesisBlock
@@ -542,7 +540,9 @@ func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr s
 		case chainFileToValidate := <-doneTransfer:
 			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
 			if err == nil && isValid {
-				m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
+				log.Println("Chain from peer is valid!")
+				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
 				return nil
 			} else if !isValid {
 				os.Remove(chainFileToValidate) // remove temp file if invalid
@@ -608,13 +608,10 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 	// Scan() reads next line and returns false when reached end or error
 	var blockToValidate *MiningBlock
 	for scanner.Scan() {
-		line := scanner.Text()
+		blockLineAsBytes := scanner.Bytes()
 		// process the line
-		blockLine := strings.TrimRight(line, ",\n")
-		log.Println("parse block line from file:", blockLine)
 		blockToValidate = new(MiningBlock)
-		err = json.Unmarshal([]byte(blockLine), blockToValidate)
-		log.Println("parsed block:", blockToValidate)
+		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
 		if err != nil {
 			return nil, false, err
 		}
@@ -623,6 +620,5 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 		}
 	}
 	lastValidatedBlock := blockToValidate
-	os.Rename(filepath, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-	return lastValidatedBlock, true, scanner.Err()     // check if Scan() finished because of error or because it reached end of file
+	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
