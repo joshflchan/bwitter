@@ -69,6 +69,7 @@ type GetExistingChainResp struct {
 const OUTPUT_DIR = "out/"
 
 var ErrInvalidChain = errors.New("chain from peer was invalid")
+var ErrStartFileServer = errors.New("failed to start file transfer server")
 
 func NewMiner() *Miner {
 	return &Miner{}
@@ -149,6 +150,8 @@ ContinueJoinProtocol:
 					if errors.Is(err, ErrInvalidChain) {
 						log.Println("Removing peer from PeerList since given chain is invalid")
 						break
+					} else if errors.Is(err, ErrStartFileServer) {
+						return err
 					}
 					log.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerRpcClient)
 				} else {
@@ -559,20 +562,18 @@ func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr s
 
 func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan string, errTransfer chan error) {
 	log.Println("start listening")
-	server, err := net.Listen("tcp", listenAddr)
+	server, err := net.Listen("tcp", listenAddr) // TODO: properly close connection
 	if err != nil {
 		log.Println("There was an err starting the file transfer server", err)
-		errTransfer <- err
-		return
+		errTransfer <- ErrStartFileServer
 	}
 	for { // continuousuly accept connections in case of retries
 		conn, err := server.Accept() // waits until connection dialed from peer
 		if err != nil {
 			log.Println("There was an err with the file transfer connection", err)
 			errTransfer <- err
-			return
 		}
-		go m.transferBlockchainFile(conn, doneTransfer, errTransfer)
+		m.transferBlockchainFile(conn, doneTransfer, errTransfer)
 	}
 }
 
