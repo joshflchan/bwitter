@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -39,6 +40,8 @@ type Miner struct {
 	CoordClient        *rpc.Client
 	PeerFailed         chan *rpc.Client
 	ChainStorageFile   string
+	broadcastChannel   chan MiningBlock
+	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
 }
@@ -73,6 +76,7 @@ func NewMiner() *Miner {
 }
 
 func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock, retryPeerThreshold uint8) error {
+
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -90,6 +94,8 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.ExpectedNumPeers = expectedNumPeers
 	m.ChainStorageFile = chainStorageFile
 	m.RetryPeerThreshold = retryPeerThreshold
+	m.broadcastChannel = make(chan MiningBlock)
+	m.BlocksSeen = make(map[string]bool)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -303,10 +309,58 @@ func (m *Miner) mineBlock() {
 			nonce++
 		}
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-		// B) Probably call a function that appends the block to disk (on longest chain)
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
 	}
+}
+
+func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock, error) {
+	fileHandle, err := os.Open("out/" + m.ChainStorageFile)
+	if err != nil {
+		log.Printf("The file ./out/"+m.ChainStorageFile+" does not exist: %v\n", err)
+		return nil, err
+	}
+	defer fileHandle.Close()
+
+	lastThresholdBlocks := make([]MiningBlock, threshold)
+
+	line := ""
+	var cursor int64 = 0
+	stat, _ := fileHandle.Stat()
+	filesize := stat.Size()
+	var recvdLines int = 0
+	for recvdLines < int(threshold) {
+		cursor -= 1
+		fileHandle.Seek(cursor, io.SeekEnd)
+
+		char := make([]byte, 1)
+		fileHandle.Read(char)
+
+		if cursor != -1 && (char[0] == 10 || char[0] == 13) { // stop if we find a line
+			recvdLines++
+			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			if err != nil {
+				log.Printf("Unable to unmarshal line %d from bottom of file\n", recvdLines)
+				return nil, err
+			}
+			line = ""
+			continue
+		}
+
+		line = fmt.Sprintf("%s%s", string(char), line) // there is more efficient way
+
+		if cursor == -filesize { // stop if we are at the begining
+			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			if err != nil {
+				log.Println("Unable to unmarshal first line from bottom of file")
+				return nil, err
+			}
+			break
+		}
+	}
+
+	validLinesRecvd := threshold - recvdLines
+	return lastThresholdBlocks[validLinesRecvd:], nil
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
@@ -325,7 +379,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 	stringToWrite := string(marshalledBlock)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
-		stringToWrite = ",\n" + stringToWrite
+		stringToWrite = "\n" + stringToWrite
 	}
 
 	f, err := os.OpenFile(chainStoragePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -337,7 +391,33 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 		log.Println(err)
 		return
 	}
-	log.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
+	fmt.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
+}
+
+// Comments for josh:
+// You'd also need another function (probably goroutine) that receives broadcasted blocks from peers
+// it would do the validation
+// it would also update the block that is CURRENTLY being mined and see what transactions are missing
+// then it would and write it to the txt file,
+
+// this is goroutine that needs to be started somewhere
+func (m *Miner) broadcastMinedBlock() {
+	for {
+		select {
+		// case <-quitWrite:
+		// 		return
+		case block := <-m.broadcastChannel:
+			fmt.Println(block)
+			// trace.RecordAction(ClientMove(req)) thots thots?
+
+			// iterate through list of peers, conn.Write
+			// if peers are just addresses we would want conn.Dial first
+			// _, err = conn.Write(data.Bytes())
+			// if err != nil {
+			// 	continue
+			// }
+		}
+	}
 }
 
 func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
@@ -369,13 +449,22 @@ func convertBlockToBytes(block MiningBlock) []byte {
 }
 
 // validate block has two parts
+// 0)? check if this hash has been seen already, short circuit if so
 // A) check proof of work hash actually corresponds to block
 // B) check transactions make sense
 func (m *Miner) validateBlock(block *MiningBlock) bool {
+	_, ok := m.BlocksSeen[block.CurrentHash]
+	if ok {
+		// seen this block already, ignore
+		return false
+	}
+	// we can mark as seen even if this block would be found invalid in the future
+	m.BlocksSeen[block.CurrentHash] = true
 	// call validatePow
-	return m.validatePoW(block)
+	// call some function that checks transactions are valid using previous balances
 
-	// TODO: call some function that checks transactions are valid using previous balances
+	// if valid, return true
+	return m.validatePoW(block)
 }
 
 // Do we also wanna check difficulty?
