@@ -44,6 +44,7 @@ type Miner struct {
 	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
+	ThresholdBlocks  []MiningBlock
 }
 
 type MiningBlock struct {
@@ -118,9 +119,6 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	}
 }
 
-// TODO: what happens if gensis block already mined by a single node...
-// node goes down... and new node joins with no peers... does it mine the genesis block again? should coord keep track somehow?
-// or is it eventually handled once the new node reaches k peers and attempts to propagate a shorter chain? what happens after?
 func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// Get peers from Coord and add to peersList
 	newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers)
@@ -144,10 +142,19 @@ ContinueJoinProtocol:
 			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
 			peerRpcClient := m.PeersList[randomIndex]
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				err := m.callGetExistingChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer)
+				var getChainErr error
+				// TODO @Ali: this should be a heap
+				// getLastThreshold will throw an error if file is not on disk
+				m.ThresholdBlocks, err = m.getLastThresholdBlocksFromStorage(10)
 				if err != nil {
-					log.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
-					if errors.Is(err, ErrInvalidChain) {
+					getChainErr = m.callGetUpToDateChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer)
+				} else {
+					getChainErr = m.callGetExistingChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer)
+				}
+
+				if getChainErr != nil {
+					log.Println("Error from RPC Miner.GetExistingChainFromPeer", getChainErr)
+					if errors.Is(getChainErr, ErrInvalidChain) {
 						log.Println("Removing peer from PeerList since given chain is invalid")
 						break
 					}
@@ -529,6 +536,74 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 	}
 	log.Println("The number of bytes are:", bytes)
 	return nil
+}
+
+func (m *Miner) callGetUpToDateChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error) error {
+	// TODO @Ali: this should be a heap
+	var getChainResp GetExistingChainResp
+	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+	if err != nil {
+		return err
+	} else {
+		log.Println("Got existing chain from peer")
+		select { // block until finish file transfer
+		case chainFileToValidate := <-doneTransfer:
+			lastValidatedBlock, isValid, err := m.validateUpToDateChainFromFile(chainFileToValidate)
+			if err == nil && isValid {
+				m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
+				return nil
+			} else if !isValid {
+				os.Remove(chainFileToValidate) // remove temp file if invalid
+				return ErrInvalidChain
+			} else {
+				os.Remove(chainFileToValidate) // rmove temp file if error
+				return err
+			}
+		case err := <-errTransfer:
+			return err
+		}
+	}
+}
+
+func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bool, error) {
+	// TODO: Perform validation on chain and store on permanent path from config
+	src, err := os.Open(filepath)
+	log.Println("validating file at path:", filepath)
+	if err != nil {
+		return nil, false, err
+	}
+	defer src.Close()
+	// read line by line in case file large
+	scanner := bufio.NewScanner(src)
+	// Scan() reads next line and returns false when reached end or error
+	var blockToValidate *MiningBlock
+	foundLastBlock := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		// process the line
+		blockLine := strings.TrimRight(line, ",\n")
+		log.Println("parse block line from file:", blockLine)
+		blockToValidate = new(MiningBlock)
+		err = json.Unmarshal([]byte(blockLine), blockToValidate)
+		log.Println("parsed block:", blockToValidate)
+		if err != nil {
+			return nil, false, err
+		}
+
+		// TODO: determine if this works with threshold blocks
+		if blockToValidate == &m.ThresholdBlocks[len(m.ThresholdBlocks)] {
+			foundLastBlock = true
+		}
+
+		if foundLastBlock {
+			if !m.validateBlock(blockToValidate) {
+				return nil, false, nil
+			}
+		}
+	}
+	lastValidatedBlock := blockToValidate
+	os.Rename(filepath, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+	return lastValidatedBlock, true, scanner.Err()     // check if Scan() finished because of error or because it reached end of file
 }
 
 func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error) error {
