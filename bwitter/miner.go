@@ -21,7 +21,6 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
@@ -38,7 +37,7 @@ type Miner struct {
 	TargetBits         int
 	Target             *big.Int
 	MiningBlock        MiningBlock
-	PeersList          PeersContainer
+	PeersList          []PeerMiner
 	CoordClient        *rpc.Client
 	PeerFailed         chan PeerMiner
 	ChainStorageFile   string
@@ -46,11 +45,6 @@ type Miner struct {
 	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
-}
-
-type PeersContainer struct {
-	mu   sync.Mutex
-	list []PeerMiner
 }
 
 type PeerMiner struct {
@@ -107,7 +101,6 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
 	m.MinerPublicKey = publicKey
-	infoLog.Println(m.MinerPublicKey)
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
@@ -157,9 +150,9 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 
 ContinueJoinProtocol:
 	for { // Try all peers in peer list
-		if len(m.PeersList.list) > 0 {
-			randomIndex := rand.Intn(len(m.PeersList.list)) // pick a random peer
-			peerMiner := m.PeersList.list[randomIndex]
+		if len(m.PeersList) > 0 {
+			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
+			peerMiner := m.PeersList[randomIndex]
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 				err := m.callGetExistingChain(peerMiner.rpcClient, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
 				if err != nil {
@@ -217,7 +210,7 @@ func (m *Miner) maintainPeersList() {
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default: // continuously check for expected num peers to build robustness of network
-			lenOfExistingPeerList := uint64(len(m.PeersList.list))
+			lenOfExistingPeerList := uint64(len(m.PeersList))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
@@ -229,14 +222,12 @@ func (m *Miner) maintainPeersList() {
 
 func (m *Miner) removeFailedMiner(failedPeer PeerMiner) {
 	var newList []PeerMiner
-	m.PeersList.mu.Lock()
-	for _, miner := range m.PeersList.list {
+	for _, miner := range m.PeersList {
 		if failedPeer.listenAddr != miner.listenAddr {
 			newList = append(newList, miner)
 		}
 	}
-	m.PeersList.list = newList
-	m.PeersList.mu.Unlock()
+	m.PeersList = newList
 }
 
 func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
@@ -260,10 +251,9 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 	//TODO: check for dups // why didn't we just use a map?
 	var toAppend []PeerMiner
-	m.PeersList.mu.Lock()
 	for _, peer := range newRequestedPeers {
-		if len(m.PeersList.list) > 0 {
-			for _, existingPeer := range m.PeersList.list {
+		if len(m.PeersList) > 0 { // need to check for dups
+			for _, existingPeer := range m.PeersList {
 				if existingPeer.listenAddr != peer {
 					infoLog.Println("Adding new miner to peer list:", peer)
 					peerConnection, err := rpc.Dial("tcp", peer)
@@ -273,14 +263,15 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 				}
 			}
 		} else {
+			infoLog.Println("Adding new miner to peer list:", peer)
 			peerConnection, err := rpc.Dial("tcp", peer)
 			if err == nil {
 				toAppend = append(toAppend, PeerMiner{peerConnection, peer})
 			}
 		}
 	}
-	m.PeersList.list = append(m.PeersList.list, toAppend...)
-	m.PeersList.mu.Unlock()
+
+	m.PeersList = append(m.PeersList, toAppend...)
 }
 
 // RPC Call for client
