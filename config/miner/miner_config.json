@@ -1,5 +1,6 @@
 {
-    "CoordAddress": "127.0.0.1:50081",
+    "MinerPublicKeyFile": "keys/miner1.rsa.pub",
+    "CoordAddress": "127.0.0.1:50082",
     "MinerListenAddr": ":6969",
     "ExpectedNumPeers": 0,
     "ChainStorageFile": "chain.txt",

@@ -28,6 +28,7 @@ import (
 )
 
 type Miner struct {
+	MinerPublicKey     string
 	CoordAddress       string
 	MinerListenAddr    string
 	ExpectedNumPeers   uint64
@@ -75,8 +76,7 @@ func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock, retryPeerThreshold uint8) error {
-
+func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock, retryPeerThreshold uint8) error {
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -89,6 +89,8 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
+	m.MinerPublicKey = publicKey
+	log.Println(m.MinerPublicKey)
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
@@ -118,9 +120,6 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	}
 }
 
-// TODO: what happens if gensis block already mined by a single node...
-// node goes down... and new node joins with no peers... does it mine the genesis block again? should coord keep track somehow?
-// or is it eventually handled once the new node reaches k peers and attempts to propagate a shorter chain? what happens after?
 func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// Get peers from Coord and add to peersList
 	newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers)
