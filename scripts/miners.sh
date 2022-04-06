@@ -26,10 +26,11 @@ mkdir -p logs/
 echo "building go miner program..."
 go build -o bin/miner ./cmd/miner
 
-for i in $( seq 1 2 ); do
+for i in $( seq 1 $num_miner_configs); do
     if [[ $i == 1 ]]; then
         bin/miner --config ./config/miner/miner_config.json &
         echo "$!" >> $MINER_PID_FILE
+        sleep 10
     else
         bin/miner --config ./config/miner/miner_config$i.json &
         echo "$!" >> $MINER_PID_FILE

@@ -21,6 +21,7 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
@@ -37,14 +38,24 @@ type Miner struct {
 	TargetBits         int
 	Target             *big.Int
 	MiningBlock        MiningBlock
-	PeersList          []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
+	PeersList          PeersContainer
 	CoordClient        *rpc.Client
-	PeerFailed         chan *rpc.Client
+	PeerFailed         chan PeerMiner
 	ChainStorageFile   string
 	broadcastChannel   chan MiningBlock
 	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
+}
+
+type PeersContainer struct {
+	mu   sync.Mutex
+	list []PeerMiner
+}
+
+type PeerMiner struct {
+	rpcClient  *rpc.Client
+	listenAddr string
 }
 
 type MiningBlock struct {
@@ -146,11 +157,11 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 
 ContinueJoinProtocol:
 	for { // Try all peers in peer list
-		if len(m.PeersList) > 0 {
-			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
-			peerRpcClient := m.PeersList[randomIndex]
+		if len(m.PeersList.list) > 0 {
+			randomIndex := rand.Intn(len(m.PeersList.list)) // pick a random peer
+			peerMiner := m.PeersList.list[randomIndex]
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				err := m.callGetExistingChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
+				err := m.callGetExistingChain(peerMiner.rpcClient, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
 				if err != nil {
 					infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
 					if errors.Is(err, ErrInvalidChain) {
@@ -159,13 +170,12 @@ ContinueJoinProtocol:
 					} else if errors.Is(err, ErrStartFileServer) {
 						return err
 					}
-					infoLog.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerRpcClient)
+					infoLog.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerMiner.listenAddr)
 				} else {
 					break ContinueJoinProtocol
 				}
 			}
-			m.PeerFailed <- peerRpcClient
-			time.Sleep(time.Second)
+			m.PeerFailed <- peerMiner
 		} else {
 			infoLog.Println("No peers available... using genesis block")
 			m.MiningBlock = genesisBlock
@@ -198,7 +208,7 @@ ContinueJoinProtocol:
 }
 
 func (m *Miner) maintainPeersList() {
-	m.PeerFailed = make(chan *rpc.Client) // initialize channel to detect failed peers
+	m.PeerFailed = make(chan PeerMiner) // initialize channel to detect failed peers
 	for {
 		select {
 		case failedClient := <-m.PeerFailed:
@@ -207,24 +217,26 @@ func (m *Miner) maintainPeersList() {
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default: // continuously check for expected num peers to build robustness of network
-			lenOfExistingPeerList := uint64(len(m.PeersList))
+			lenOfExistingPeerList := uint64(len(m.PeersList.list))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
+			time.Sleep(time.Second) // wait a bit
 		}
 	}
 }
 
-func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
-	var newList []*rpc.Client
-	for _, miner := range m.PeersList {
-		if failedClient != miner {
+func (m *Miner) removeFailedMiner(failedPeer PeerMiner) {
+	var newList []PeerMiner
+	m.PeersList.mu.Lock()
+	for _, miner := range m.PeersList.list {
+		if failedPeer.listenAddr != miner.listenAddr {
 			newList = append(newList, miner)
 		}
 	}
-
-	m.PeersList = newList
+	m.PeersList.list = newList
+	m.PeersList.mu.Unlock()
 }
 
 func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
@@ -246,17 +258,29 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 }
 
 func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
-	//TODO: check for dups
-	var toAppend []*rpc.Client
+	//TODO: check for dups // why didn't we just use a map?
+	var toAppend []PeerMiner
+	m.PeersList.mu.Lock()
 	for _, peer := range newRequestedPeers {
-		infoLog.Println("Adding new miner to peer list:", peer)
-		peerConnection, err := rpc.Dial("tcp", peer)
-		if err != nil {
-			continue
+		if len(m.PeersList.list) > 0 {
+			for _, existingPeer := range m.PeersList.list {
+				if existingPeer.listenAddr != peer {
+					infoLog.Println("Adding new miner to peer list:", peer)
+					peerConnection, err := rpc.Dial("tcp", peer)
+					if err == nil {
+						toAppend = append(toAppend, PeerMiner{peerConnection, peer})
+					}
+				}
+			}
+		} else {
+			peerConnection, err := rpc.Dial("tcp", peer)
+			if err == nil {
+				toAppend = append(toAppend, PeerMiner{peerConnection, peer})
+			}
 		}
-		toAppend = append(toAppend, peerConnection)
 	}
-	m.PeersList = append(m.PeersList, toAppend...)
+	m.PeersList.list = append(m.PeersList.list, toAppend...)
+	m.PeersList.mu.Unlock()
 }
 
 // RPC Call for client
