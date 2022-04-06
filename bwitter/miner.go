@@ -1,6 +1,7 @@
 package bwitter
 
 import (
+	"bufio"
 	"bytes"
 	"crypto"
 	"crypto/rsa"
@@ -8,14 +9,18 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"math/big"
+	"math/rand"
 	"net"
 	"net/rpc"
 	"os"
+	"strings"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
@@ -23,17 +28,19 @@ import (
 )
 
 type Miner struct {
-	CoordAddress     string
-	MinerListenAddr  string
-	ExpectedNumPeers uint64
-	TargetBits       int
-	Target           *big.Int
-	MiningBlock      MiningBlock
-	PeersList        []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
-	CoordClient      *rpc.Client
-	PeerFailed       chan *rpc.Client
-	ChainStorageFile string
-	broadcastChannel chan MiningBlock
+	CoordAddress       string
+	MinerListenAddr    string
+	ExpectedNumPeers   uint64
+	RetryPeerThreshold uint8
+	TargetBits         int
+	Target             *big.Int
+	MiningBlock        MiningBlock
+	PeersList          []*rpc.Client // doesn't need lock because modification of list only occurs in one goroutine;
+	CoordClient        *rpc.Client
+	PeerFailed         chan *rpc.Client
+	ChainStorageFile   string
+	broadcastChannel   chan MiningBlock
+	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
 }
@@ -59,11 +66,24 @@ type PropagateArgs struct {
 type PropagateResponse struct {
 }
 
+type GetExistingChainArgs struct {
+	FileListenAddr string
+}
+
+type GetExistingChainResp struct {
+}
+
+const OUTPUT_DIR = "out/"
+
+var ErrInvalidChain = errors.New("chain from peer was invalid")
+var ErrStartFileServer = errors.New("failed to start file transfer server")
+
 func NewMiner() *Miner {
 	return &Miner{}
 }
 
-func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock) error {
+func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock, retryPeerThreshold uint8) error {
+
 	err := rpc.Register(m)
 	if err != nil {
 		log.Println("Failed to RPC register Miner")
@@ -72,7 +92,7 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 16
+	m.TargetBits = 18
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -80,7 +100,9 @@ func (m *Miner) Start(coordAddress string, minerListenAddr string, expectedNumPe
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
 	m.ChainStorageFile = chainStorageFile
+	m.RetryPeerThreshold = retryPeerThreshold
 	m.broadcastChannel = make(chan MiningBlock)
+	m.BlocksSeen = make(map[string]bool)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -110,17 +132,47 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// Get peers from Coord and add to peersList
 	newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers)
 	m.addNewMinerToPeersList(newRequestedPeers)
+	// Maintain peersList
+	go m.maintainPeersList()
 
-	// For genesis block -- Coord returns no peers
-	if len(m.PeersList) == 0 {
-		m.MiningBlock = genesisBlock
-	} else {
-		// TODO: Get entire blockchain from a peer
-
-		// TODO: Perform validation on chain and store on disk
-
-		// TODO: Set m.MiningBlock
+	// TODO: Get entire blockchain from a peer
+	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
+	if err != nil {
+		log.Println(err)
+		return err
 	}
+	doneTransfer := make(chan string, 1)
+	errTransfer := make(chan error, 1)
+	go m.startFileTransferServer(fileListenAddr, doneTransfer, errTransfer)
+
+ContinueJoinProtocol:
+	for { // Try all peers in peer list
+		if len(m.PeersList) > 0 {
+			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
+			peerRpcClient := m.PeersList[randomIndex]
+			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+				err := m.callGetExistingChain(peerRpcClient, fileListenAddr, doneTransfer, errTransfer)
+				if err != nil {
+					log.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
+					if errors.Is(err, ErrInvalidChain) {
+						log.Println("Removing peer from PeerList since given chain is invalid")
+						break
+					} else if errors.Is(err, ErrStartFileServer) {
+						return err
+					}
+					log.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerRpcClient)
+				} else {
+					break ContinueJoinProtocol
+				}
+			}
+			m.PeerFailed <- peerRpcClient
+		} else {
+			log.Println("No peers available... using genesis block")
+			m.MiningBlock = genesisBlock
+			break
+		}
+	}
+
 	// Start fcheck to acknowledge heartbeats from Coord before notifying Coord of Join
 	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
 	if err != nil {
@@ -140,22 +192,23 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 		return err
 	}
 	log.Println("JOIN PROTOCOL: Join complete!")
-	// Maintain peersList
-	go m.maintainPeersList()
 	// Start mining
 	go m.mineBlock()
 	return nil
 }
 
 func (m *Miner) maintainPeersList() {
+	log.Println("inside maintainPeersList")
 	m.PeerFailed = make(chan *rpc.Client) // initialize channel to detect failed peers
 	for {
 		select {
 		case failedClient := <-m.PeerFailed:
+			log.Println("A peer failed: ", failedClient)
 			m.removeFailedMiner(failedClient)
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default: // continuously check for expected num peers to build robustness of network
+			log.Println("Checking for expected num peers")
 			lenOfExistingPeerList := uint64(len(m.PeersList))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
@@ -187,7 +240,7 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 	if err != nil {
 		log.Println("unable to complete call to Coord.GetPeers", err)
 	}
-
+	log.Println("getPeers response: ", getPeersResponse)
 	return getPeersResponse.NeighborAddrs
 }
 
@@ -203,6 +256,7 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 		toAppend = append(toAppend, peerConnection)
 	}
 	m.PeersList = append(m.PeersList, toAppend...)
+	log.Println("peers list: ", m.PeersList)
 }
 
 // RPC Call for client
@@ -210,9 +264,6 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	// TODO: somewhere in here we should check if operation is seen already
 	log.Println("POST msg received:", postArgs.MessageContents)
 	msgContent := postArgs.MessageContents + postArgs.Timestamp
-
-	// HERE ARE YOUR BYTES!!!!
-	// msgBytes := network.Bytes()
 
 	// hash
 	msgHash := sha256.New()
@@ -269,7 +320,7 @@ func (m *Miner) mineBlock() {
 				// this will be true if the hash computed has the first m.TargetBits as 0
 				if hashInteger.Cmp(m.Target) == -1 {
 					block.CurrentHash = hex.EncodeToString(hash[:])
-					fmt.Println("MINED BLOCK: ", block)
+					log.Println("MINED BLOCK: ", block)
 					break
 				}
 
@@ -339,9 +390,9 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
-	if _, err := os.Stat("out"); os.IsNotExist(err) {
-		if err := os.Mkdir("out", os.ModePerm); err != nil {
-			log.Printf("Unable to create dir ./out: %v\n", err)
+	if _, err := os.Stat(OUTPUT_DIR); os.IsNotExist(err) {
+		if err := os.Mkdir(OUTPUT_DIR, os.ModePerm); err != nil {
+			log.Printf("Unable to create dir ./%v: %v\n", OUTPUT_DIR, err)
 			return
 		}
 	}
@@ -350,7 +401,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 		log.Println(err)
 	}
 
-	chainStoragePath := "out/" + m.ChainStorageFile
+	chainStoragePath := OUTPUT_DIR + m.ChainStorageFile
 
 	stringToWrite := string(marshalledBlock)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
@@ -433,7 +484,7 @@ func convertBlockToBytes(block MiningBlock) []byte {
 	enc := gob.NewEncoder(&data)
 	err := enc.Encode(block)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		os.Exit(1)
 		return nil
 	}
@@ -441,27 +492,40 @@ func convertBlockToBytes(block MiningBlock) []byte {
 }
 
 // validate block has two parts
+// 0)? check if this hash has been seen already, short circuit if so
 // A) check proof of work hash actually corresponds to block
 // B) check transactions make sense
-func (m *Miner) validateBlock() {
+func (m *Miner) validateBlock(block *MiningBlock) bool {
+	_, ok := m.BlocksSeen[block.CurrentHash]
+	if ok {
+		// seen this block already, ignore
+		return false
+	}
+	// we can mark as seen even if this block would be found invalid in the future
+	m.BlocksSeen[block.CurrentHash] = true
 	// call validatePow
 	// call some function that checks transactions are valid using previous balances
+
+	// if valid, return true
+	return m.validatePoW(block)
 }
 
 // Do we also wanna check difficulty?
-func (m *Miner) validatePoW(block MiningBlock) bool {
+func (m *Miner) validatePoW(block *MiningBlock) bool {
 	var computedHash [32]byte
 	var computedHashInteger big.Int
 	var givenHash [32]byte
 	var givenHashInteger big.Int
 
-	copy(givenHash[:], block.CurrentHash)
+	givenHashDecoded, _ := hex.DecodeString(block.CurrentHash)
+	copy(givenHash[:], givenHashDecoded)
 	block.CurrentHash = ""
-	blockBytes := convertBlockToBytes(block)
+	blockBytes := convertBlockToBytes(*block)
 	computedHash = sha256.Sum256(blockBytes)
 	// Convert hash array to slice with [:]
 	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
+
 	// Check if the hash given is the same as the hash generate from the block
 	return computedHashInteger.Cmp(&givenHashInteger) == 0
 }
@@ -488,18 +552,118 @@ func startFCheckListenOnly(nodeAddr string) (string, error) {
 }
 
 // RPC call to peer node
-func (m *Miner) getExistingChainFromPeer() {
-	// TODO: Reading from disk
+func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetExistingChainResp) error {
 	// config file should have filepath for blockchain on disk storage
-
-	// send entire chain in RPC repsonse
+	log.Println("JOIN Protocol: Sending existing chain to new miner")
+	conn, err := net.Dial("tcp", args.FileListenAddr)
+	if err != nil {
+		log.Println("There was an error making a connection")
+		return err
+	}
+	//file to read
+	file, err := os.Open(strings.TrimSpace(OUTPUT_DIR + m.ChainStorageFile))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	bytes, err := io.Copy(conn, file)
+	if err != nil {
+		return err
+	}
+	log.Println("The number of bytes are:", bytes)
+	return nil
 }
 
-// COMMENTED OUT BEAUSE I THINK THIS SHOULD BE IN miner/main.go
-// START SHOULD JUST RETURN ERRORS AND PROPAGATE UP
-// func CheckErr(err error, errfmsg string, fargs ...interface{}) {
-// 	if err != nil {
-// 		log.Printf(os.Stderr, errfmsg, fargs...)
-// 		os.Exit(1)
-// 	}
-// }
+func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error) error {
+	var getChainResp GetExistingChainResp
+	log.Println("fileListenAddr: ", fileListenAddr)
+	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+	if err != nil {
+		log.Println("Err: ", err)
+		return err
+	} else {
+		log.Println("Got existing chain from peer")
+		select { // block until finish file transfer
+		case chainFileToValidate := <-doneTransfer:
+			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
+			if err == nil && isValid {
+				log.Println("Chain from peer is valid!")
+				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
+				return nil
+			} else if !isValid {
+				os.Remove(chainFileToValidate) // remove temp file if invalid
+				return ErrInvalidChain
+			} else {
+				os.Remove(chainFileToValidate) // rmove temp file if error
+				return err
+			}
+		case err := <-errTransfer:
+			return err
+		}
+	}
+}
+
+func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan string, errTransfer chan error) {
+	log.Println("start listening")
+	server, err := net.Listen("tcp", listenAddr) // TODO: properly close connection
+	if err != nil {
+		log.Println("There was an err starting the file transfer server", err)
+		errTransfer <- ErrStartFileServer
+	}
+	for { // continuousuly accept connections in case of retries
+		conn, err := server.Accept() // waits until connection dialed from peer
+		if err != nil {
+			log.Println("There was an err with the file transfer connection", err)
+			errTransfer <- err
+		}
+		m.transferBlockchainFile(conn, doneTransfer, errTransfer)
+	}
+}
+
+func (m *Miner) transferBlockchainFile(conn net.Conn, doneTransfer chan string, errTransfer chan error) {
+	file, err := ioutil.TempFile(OUTPUT_DIR, "peer_blockchain_to_be_validated")
+	if err != nil {
+		log.Println("Failed to create temp file to transfer blockchain", err)
+		errTransfer <- err
+		return
+	}
+	log.Println("Created temp file to validate blockchain from peer:", file.Name())
+	bytes, err := io.Copy(file, conn)
+	if err != nil {
+		log.Println("Failed to copy from connection to temp file", err)
+		errTransfer <- err
+		return
+	}
+	log.Println("The number of bytes are:", bytes)
+	conn.Close() // close connection
+	doneTransfer <- file.Name()
+}
+
+func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bool, error) {
+	// TODO: Perform validation on chain and store on permanent path from config
+	src, err := os.Open(filepath)
+	log.Println("validating file at path:", filepath)
+	if err != nil {
+		return nil, false, err
+	}
+	defer src.Close()
+	// read line by line in case file large
+	scanner := bufio.NewScanner(src)
+	// Scan() reads next line and returns false when reached end or error
+	var blockToValidate *MiningBlock
+	for scanner.Scan() {
+		blockLineAsBytes := scanner.Bytes()
+		// process the line
+		blockToValidate = new(MiningBlock)
+		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
+		if err != nil {
+			return nil, false, err
+		}
+		if !m.validateBlock(blockToValidate) {
+			return nil, false, nil
+		}
+	}
+	lastValidatedBlock := blockToValidate
+	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
+}
