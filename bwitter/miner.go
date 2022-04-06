@@ -244,11 +244,8 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 	//TODO: check for dups
 	var toAppend []*rpc.Client
 	for _, peer := range newRequestedPeers {
-<<<<<<< HEAD
-		log.Println("NEW PEER: ", peer)
-=======
 		log.Println("Adding new miner to peer list:", peer)
->>>>>>> master
+
 		peerConnection, err := rpc.Dial("tcp", peer)
 		if err != nil {
 			continue
@@ -291,9 +288,18 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	// propagate op [JOSH]
 	log.Println("Propagating: ", postArgs)
 	var reply util.PostResponse
+retryPeer:
 	for i, peerConnection := range m.PeersList {
 		log.Printf("Propagating to peer %d: %v", i, postArgs)
-		peerConnection.Call("Miner.Post", postArgs, &reply)
+		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+			err := peerConnection.Call("Miner.Post", postArgs, &reply)
+			if err != nil {
+				log.Println("Error from RPC Miner.Post", err)
+			} else {
+				continue retryPeer
+			}
+		}
+		m.PeerFailed <- peerConnection
 	}
 
 	return nil
