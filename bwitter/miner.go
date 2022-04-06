@@ -134,6 +134,7 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	m.addNewMinerToPeersList(newRequestedPeers)
 	// Maintain peersList
 	go m.maintainPeersList()
+	log.Println("UM HELLO")
 
 	// TODO: Get entire blockchain from a peer
 	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
@@ -143,11 +144,14 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	}
 	doneTransfer := make(chan string, 1)
 	errTransfer := make(chan error, 1)
+	log.Println("UM HELLO 1")
 	go m.startFileTransferServer(fileListenAddr, doneTransfer, errTransfer)
+	log.Println("UM HELLO 2")
 
 ContinueJoinProtocol:
 	for { // Try all peers in peer list
 		if len(m.PeersList) > 0 {
+			log.Println("We have peers: ", m.PeersList)
 			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
 			peerRpcClient := m.PeersList[randomIndex]
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
@@ -208,9 +212,9 @@ func (m *Miner) maintainPeersList() {
 			newRequestedPeers := m.callCoordGetPeers(1)
 			m.addNewMinerToPeersList(newRequestedPeers)
 		default: // continuously check for expected num peers to build robustness of network
-			log.Println("Checking for expected num peers")
 			lenOfExistingPeerList := uint64(len(m.PeersList))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
+				log.Println("not enough peers")
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
@@ -227,6 +231,7 @@ func (m *Miner) removeFailedMiner(failedClient *rpc.Client) {
 	}
 
 	m.PeersList = newList
+	log.Println("Peers list after removal: ", m.PeersList)
 }
 
 func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
@@ -604,8 +609,10 @@ func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr s
 	var rpcError error
 
 	for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+		log.Println("Calling GetExistingChainFromPeer")
 		err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
 		if err != nil {
+			log.Println("Error calling GetExistingChainFromPeer: ", err)
 			rpcError = err
 		} else {
 			log.Println("Got existing chain from peer")
@@ -642,7 +649,9 @@ func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan str
 		errTransfer <- ErrStartFileServer
 	}
 	for { // continuousuly accept connections in case of retries
+		log.Println("accept")
 		conn, err := server.Accept() // waits until connection dialed from peer
+		log.Println("accept is not the problem")
 		if err != nil {
 			log.Println("There was an err with the file transfer connection", err)
 			errTransfer <- err
