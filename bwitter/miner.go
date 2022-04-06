@@ -37,19 +37,14 @@ type Miner struct {
 	TargetBits         int
 	Target             *big.Int
 	MiningBlock        MiningBlock
-	PeersList          []PeerMiner
+	PeersList          map[string]*rpc.Client
 	CoordClient        *rpc.Client
-	PeerFailed         chan PeerMiner
+	PeerFailed         chan string
 	ChainStorageFile   string
 	broadcastChannel   chan MiningBlock
 	BlocksSeen         map[string]bool // Hash of blocks seen
 
 	TransactionsList []Transaction
-}
-
-type PeerMiner struct {
-	rpcClient  *rpc.Client
-	listenAddr string
 }
 
 type MiningBlock struct {
@@ -96,7 +91,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 16
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -104,6 +99,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.CoordAddress = coordAddress
 	m.MinerListenAddr = minerListenAddr
 	m.ExpectedNumPeers = expectedNumPeers
+	m.PeersList = make(map[string]*rpc.Client)
 	m.ChainStorageFile = chainStorageFile
 	m.RetryPeerThreshold = retryPeerThreshold
 	m.broadcastChannel = make(chan MiningBlock)
@@ -150,11 +146,17 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 
 ContinueJoinProtocol:
 	for { // Try all peers in peer list
-		if len(m.PeersList) > 0 {
-			randomIndex := rand.Intn(len(m.PeersList)) // pick a random peer
-			peerMiner := m.PeersList[randomIndex]
+		numPeers := len(m.PeersList)
+		if numPeers > 0 {
+			randomIndex := rand.Intn(numPeers) // pick a random peer
+			// get keys
+			peerAddresses := make([]string, 0, numPeers)
+			for k := range m.PeersList {
+				peerAddresses = append(peerAddresses, k)
+			}
+			peerMiner := peerAddresses[randomIndex]
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				err := m.callGetExistingChain(peerMiner.rpcClient, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
+				err := m.callGetExistingChain(peerMiner, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
 				if err != nil {
 					infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
 					if errors.Is(err, ErrInvalidChain) {
@@ -163,7 +165,7 @@ ContinueJoinProtocol:
 					} else if errors.Is(err, ErrStartFileServer) {
 						return err
 					}
-					infoLog.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerMiner.listenAddr)
+					infoLog.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerMiner)
 				} else {
 					break ContinueJoinProtocol
 				}
@@ -201,7 +203,7 @@ ContinueJoinProtocol:
 }
 
 func (m *Miner) maintainPeersList() {
-	m.PeerFailed = make(chan PeerMiner) // initialize channel to detect failed peers
+	m.PeerFailed = make(chan string) // initialize channel to detect failed peers
 	for {
 		select {
 		case failedClient := <-m.PeerFailed:
@@ -220,14 +222,8 @@ func (m *Miner) maintainPeersList() {
 	}
 }
 
-func (m *Miner) removeFailedMiner(failedPeer PeerMiner) {
-	var newList []PeerMiner
-	for _, miner := range m.PeersList {
-		if failedPeer.listenAddr != miner.listenAddr {
-			newList = append(newList, miner)
-		}
-	}
-	m.PeersList = newList
+func (m *Miner) removeFailedMiner(failedPeer string) {
+	delete(m.PeersList, failedPeer)
 }
 
 func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
@@ -249,29 +245,17 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 }
 
 func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
-	//TODO: check for dups // why didn't we just use a map?
-	var toAppend []PeerMiner
 	for _, peer := range newRequestedPeers {
-		if len(m.PeersList) > 0 { // need to check for dups
-			for _, existingPeer := range m.PeersList {
-				if existingPeer.listenAddr != peer {
-					infoLog.Println("Adding new miner to peer list:", peer)
-					peerConnection, err := rpc.Dial("tcp", peer)
-					if err == nil {
-						toAppend = append(toAppend, PeerMiner{peerConnection, peer})
-					}
-				}
-			}
+		if _, ok := m.PeersList[peer]; ok {
+			continue
 		} else {
 			infoLog.Println("Adding new miner to peer list:", peer)
 			peerConnection, err := rpc.Dial("tcp", peer)
 			if err == nil {
-				toAppend = append(toAppend, PeerMiner{peerConnection, peer})
+				m.PeersList[peer] = peerConnection
 			}
 		}
 	}
-
-	m.PeersList = append(m.PeersList, toAppend...)
 }
 
 // RPC Call for client
@@ -559,19 +543,20 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 	return nil
 }
 
-func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
+func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
 	var getChainResp GetExistingChainResp
+	peerRpcClient := m.PeersList[peerMiner]
 	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
 	if err != nil {
 		return err
 	} else {
 		prepTransfer <- true
-		infoLog.Println("Got existing chain from peer")
+		infoLog.Println("Got existing chain from peer: ", peerMiner)
 		select { // block until finish file transfer
 		case chainFileToValidate := <-doneTransfer:
 			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
 			if err == nil && isValid {
-				infoLog.Println("Chain from peer is valid!")
+				infoLog.Println("Chain from peer is valid!", peerMiner)
 				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
 				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
 				return nil

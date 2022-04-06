@@ -36,12 +36,13 @@ for i in $( seq 1 $num_miner_configs); do
         bin/miner --config ./config/miner/miner_config.json &
         echo "$!" >> $MINER_PID_FILE
         echo "========================================================================"
-        echo "sleeping for 10 seconds... so that first miner can mine geneis block; remove if want to test case where multiple nodes mine genesis block"
+        echo "sleeping for 3 seconds... so that first miner can mine geneis block; remove if want to test case where multiple nodes mine genesis block"
         echo "========================================================================"
-        sleep 10 
+        sleep 3
     else
         bin/miner --config ./config/miner/miner_config$i.json &
         echo "$!" >> $MINER_PID_FILE
+        sleep 3
     fi
 done
 wait # don't remove this line
