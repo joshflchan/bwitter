@@ -5,8 +5,8 @@
     "ExpectedNumPeers": 1,
     "ChainStorageFile": "chain4.txt",
     "GenesisBlock": {
-        "MinerID": "0",
-        "SequenceNumber": "0",
+        "SequenceNumber": 0,
+        "MinerPublicKey": "",
         "Transactions": [],
         "Nonce": 0,
         "PrevHash": "",

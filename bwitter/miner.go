@@ -48,12 +48,12 @@ type Miner struct {
 }
 
 type MiningBlock struct {
-	SequenceNum  int
-	MinerID      string
-	Transactions []Transaction
-	Nonce        int64
-	PrevHash     string
-	CurrentHash  string
+	SequenceNum    int
+	MinerPublicKey string
+	Transactions   []Transaction
+	Nonce          int64
+	PrevHash       string
+	CurrentHash    string
 }
 
 type Transaction struct {
@@ -81,7 +81,7 @@ func NewMiner() *Miner {
 }
 
 func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr string, expectedNumPeers uint64, chainStorageFile string, genesisBlock MiningBlock, retryPeerThreshold uint8) error {
-	infoLog = log.New(os.Stdout, fmt.Sprintf("MINER %v - ", minerListenAddr), log.Ldate|log.Ltime)
+	infoLog = log.New(os.Stdout, fmt.Sprintf("MINER %v - ", minerListenAddr), log.Ldate|log.Lmicroseconds)
 
 	err := rpc.Register(m)
 	if err != nil {
@@ -444,7 +444,7 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 	m.MiningBlock = MiningBlock{}
 	m.MiningBlock.SequenceNum = oldSeqNum + 1
 	m.MiningBlock.PrevHash = prevHash
-	m.MiningBlock.MinerID = "1" // TODO READ FROM SOME GLOBAL TING
+	m.MiningBlock.MinerPublicKey = m.MinerPublicKey
 	copy(m.MiningBlock.Transactions, missingTransactions)
 }
 
