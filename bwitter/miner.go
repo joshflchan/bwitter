@@ -248,12 +248,7 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 	//TODO: check for dups
 	var toAppend []*rpc.Client
 	for _, peer := range newRequestedPeers {
-<<<<<<< HEAD
 		log.Println("NEW PEER: ", peer)
-=======
-		log.Println("Adding new miner to peer list:", peer)
-
->>>>>>> 1c5fdb8f917646a6891683d3575950a3ae6d4a79
 		peerConnection, err := rpc.Dial("tcp", peer)
 		if err != nil {
 			continue
@@ -606,28 +601,6 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 
 func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error) error {
 	var getChainResp GetExistingChainResp
-<<<<<<< HEAD
-	log.Println("fileListenAddr: ", fileListenAddr)
-	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
-	if err != nil {
-		log.Println("Err: ", err)
-		return err
-	} else {
-		log.Println("Got existing chain from peer")
-		select { // block until finish file transfer
-		case chainFileToValidate := <-doneTransfer:
-			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
-			if err == nil && isValid {
-				log.Println("Chain from peer is valid!")
-				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
-				return nil
-			} else if !isValid {
-				os.Remove(chainFileToValidate) // remove temp file if invalid
-				return ErrInvalidChain
-			} else {
-				os.Remove(chainFileToValidate) // rmove temp file if error
-=======
 	var rpcError error
 
 	for i := uint8(0); i < m.RetryPeerThreshold; i++ {
@@ -652,7 +625,6 @@ func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr s
 					return err
 				}
 			case err := <-errTransfer:
->>>>>>> 1c5fdb8f917646a6891683d3575950a3ae6d4a79
 				return err
 			}
 		}
