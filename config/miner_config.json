@@ -10,5 +10,6 @@
         "Nonce": 0,
         "PrevHash": "",
         "CurrentHash": ""
-    }
+    },
+    "RetryPeerThreshold": 3
 }
