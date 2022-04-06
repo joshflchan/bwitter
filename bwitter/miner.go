@@ -338,9 +338,19 @@ func (m *Miner) mineBlock() {
 		m.writeNewBlockToStorage(block)
 
 		var reply PropagateResponse
+	retryPeer:
 		for i, peerConnection := range m.PeersList {
 			log.Printf("Propogate block to peer %d", i)
-			peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
+
+			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
+				if err != nil {
+					log.Println("Error from Miner.PropagateBlock", err)
+				} else {
+					continue retryPeer
+				}
+			}
+			m.PeerFailed <- peerConnection
 		}
 	}
 }
@@ -457,12 +467,18 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 
 	// Propagate to peers
 	var reply PropagateResponse
+retryPeer:
 	for i, peerConnection := range m.PeersList {
 		log.Printf("Propogate to peer %d", i)
-		err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
-		if err != nil {
-			log.Println(err)
+		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+			err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
+			if err != nil {
+				log.Println("Error from RPC Miner.PropagateBlock", err)
+			} else {
+				continue retryPeer
+			}
 		}
+		m.PeerFailed <- peerConnection
 	}
 
 	return nil
@@ -581,30 +597,37 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 
 func (m *Miner) callGetExistingChain(peerRpcClient *rpc.Client, fileListenAddr string, doneTransfer chan string, errTransfer chan error) error {
 	var getChainResp GetExistingChainResp
-	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
-	if err != nil {
-		return err
-	} else {
-		log.Println("Got existing chain from peer")
-		select { // block until finish file transfer
-		case chainFileToValidate := <-doneTransfer:
-			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
-			if err == nil && isValid {
-				log.Println("Chain from peer is valid!")
-				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
-				return nil
-			} else if !isValid {
-				os.Remove(chainFileToValidate) // remove temp file if invalid
-				return ErrInvalidChain
-			} else {
-				os.Remove(chainFileToValidate) // rmove temp file if error
+	var rpcError error
+
+	for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+		err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+		if err != nil {
+			rpcError = err
+		} else {
+			log.Println("Got existing chain from peer")
+			select { // block until finish file transfer
+			case chainFileToValidate := <-doneTransfer:
+				lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
+				if err == nil && isValid {
+					log.Println("Chain from peer is valid!")
+					os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+					m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
+					return nil
+				} else if !isValid {
+					os.Remove(chainFileToValidate) // remove temp file if invalid
+					return ErrInvalidChain
+				} else {
+					os.Remove(chainFileToValidate) // rmove temp file if error
+					return err
+				}
+			case err := <-errTransfer:
 				return err
 			}
-		case err := <-errTransfer:
-			return err
 		}
 	}
+
+	m.PeerFailed <- peerRpcClient
+	return rpcError
 }
 
 func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan string, errTransfer chan error) {
