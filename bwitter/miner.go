@@ -477,6 +477,10 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	log.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
 
+	if !m.validateBlock(&propagateArgs.Block) {
+		return nil
+	}
+
 	// Propagate to peers
 	var reply PropagateResponse
 retryPeer:
