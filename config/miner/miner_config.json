@@ -1,11 +1,12 @@
 {
-    "CoordAddress": "127.0.0.1:50081",
-    "MinerListenAddr": ":6969",
+    "MinerPublicKeyFile": "keys/miner1.rsa.pub",
+    "CoordAddress": "127.0.0.1:50082",
+    "MinerListenAddr": ":6505",
     "ExpectedNumPeers": 0,
     "ChainStorageFile": "chain.txt",
     "GenesisBlock": {
-        "MinerID": "0",
-        "SequenceNumber": "0",
+        "SequenceNumber": 0,
+        "MinerPublicKey": "",
         "Transactions": [],
         "Nonce": 0,
         "PrevHash": "",
