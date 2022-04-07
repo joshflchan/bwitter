@@ -302,7 +302,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	var reply util.PostResponse
 retryPeer:
 	for peerAddress, peerConnection := range m.PeersList {
-		log.Printf("Propagating to peer %d: %v", peerAddress, postArgs)
+		log.Printf("Propagating to peer %v: %v", peerAddress, postArgs)
 		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 			err := peerConnection.Call("Miner.Post", postArgs, &reply)
 			if err != nil {
@@ -352,7 +352,7 @@ func (m *Miner) mineBlock() {
 		var reply PropagateResponse
 	retryPeer:
 		for peerAddress, peerConnection := range m.PeersList {
-			log.Printf("Propogate block to peer %d", peerAddress)
+			log.Printf("Propogate block to peer %v", peerAddress)
 
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
@@ -447,32 +447,6 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 	fmt.Println("WROTE NEW BLOCK TO STORAGE, nonce: ", minedBlock.Nonce)
 }
 
-// Comments for josh:
-// You'd also need another function (probably goroutine) that receives broadcasted blocks from peers
-// it would do the validation
-// it would also update the block that is CURRENTLY being mined and see what transactions are missing
-// then it would and write it to the txt file,
-
-// this is goroutine that needs to be started somewhere
-func (m *Miner) broadcastMinedBlock() {
-	for {
-		select {
-		// case <-quitWrite:
-		// 		return
-		case block := <-m.broadcastChannel:
-			fmt.Println(block)
-			// trace.RecordAction(ClientMove(req)) thots thots?
-
-			// iterate through list of peers, conn.Write
-			// if peers are just addresses we would want conn.Dial first
-			// _, err = conn.Write(data.Bytes())
-			// if err != nil {
-			// 	continue
-			// }
-		}
-	}
-}
-
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	log.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
@@ -485,7 +459,7 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	var reply PropagateResponse
 retryPeer:
 	for peerAddress, peerConnection := range m.PeersList {
-		log.Printf("Propogate to peer %d", peerAddress)
+		log.Printf("Propogate to peer %v", peerAddress)
 		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 			err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
 			if err != nil {
@@ -621,21 +595,21 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 	} else {
 		prepTransfer <- true
 		infoLog.Println("Got existing chain from peer: ", peerMiner)
-		select { // block until finish file transfer
-		case chainFileToValidate := <-doneTransfer:
-			lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
-			if err == nil && isValid {
-				infoLog.Println("Chain from peer is valid!", peerMiner)
-				os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-				m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
-				return nil
-			} else if !isValid {
-				os.Remove(chainFileToValidate) // remove temp file if invalid
-				return ErrInvalidChain
-			} else {
-				os.Remove(chainFileToValidate) // rmove temp file if error
-				return err
-			}
+
+		chainFileToValidate := <-doneTransfer
+
+		lastValidatedBlock, isValid, err := m.validateExistingChainFromFile(chainFileToValidate)
+		if err == nil && isValid {
+			infoLog.Println("Chain from peer is valid!", peerMiner)
+			os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+			m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
+			return nil
+		} else if !isValid {
+			os.Remove(chainFileToValidate) // remove temp file if invalid
+			return ErrInvalidChain
+		} else {
+			os.Remove(chainFileToValidate) // rmove temp file if error
+			return err
 		}
 	}
 }
