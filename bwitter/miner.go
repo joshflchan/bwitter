@@ -100,7 +100,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 20
+	m.TargetBits = 18
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -400,7 +400,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 
 		if cursor != -1 && (char[0] == 10 || char[0] == 13) { // stop if we find a line
 			recvdLines++
-			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			err = m.unmarshalBlock([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
 			if err != nil {
 				infoLog.Printf("Unable to unmarshal line %d from bottom of file\n", recvdLines)
 				return nil, err
@@ -412,7 +412,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 		line = fmt.Sprintf("%s%s", string(char), line) // there is more efficient way
 
 		if cursor == -filesize { // stop if we are at the begining
-			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			err = m.unmarshalBlock([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
 			if err != nil {
 				infoLog.Println("Unable to unmarshal first line from bottom of file")
 				return nil, err
@@ -426,7 +426,6 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
-	infoLog.Println("before zomg", minedBlock)
 	if _, err := os.Stat(OUTPUT_DIR); os.IsNotExist(err) {
 		if err := os.Mkdir(OUTPUT_DIR, os.ModePerm); err != nil {
 			infoLog.Printf("Unable to create dir ./%v: %v\n", OUTPUT_DIR, err)
@@ -441,7 +440,6 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 	chainStoragePath := OUTPUT_DIR + m.ChainStorageFile
 
 	stringToWrite := string(marshalledBlock)
-	infoLog.Println("ZOMG WTF IS THIS: ", stringToWrite)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
 		stringToWrite = "\n" + stringToWrite
 	}
@@ -463,8 +461,10 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	// Validate the block
 
 	if !m.validateBlock(&propagateArgs.Block) {
+		infoLog.Println("Block is not valid")
 		return nil
 	}
+	infoLog.Println("Block is successfully validated")
 
 	// Propagate to peers
 	var reply PropagateResponse
@@ -480,6 +480,9 @@ retryPeer:
 			}
 		}
 		m.PeerFailed <- peerAddress
+	}
+	if propagateArgs.Block.Transactions == nil {
+		propagateArgs.Block.Transactions = []Transaction{}
 	}
 
 	m.writeNewBlockToStorage(propagateArgs.Block)
@@ -658,12 +661,12 @@ func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bo
 		blockLineAsBytes := scanner.Bytes()
 		// process the line
 		blockToValidate = new(MiningBlock)
-		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
+		err = m.unmarshalBlock(blockLineAsBytes, blockToValidate)
 		if err != nil {
 			return nil, false, err
 		}
 
-		if blockToValidate == &m.ThresholdBlocks[len(m.ThresholdBlocks)-1] {
+		if m.compareBlocks(*blockToValidate, m.ThresholdBlocks[len(m.ThresholdBlocks)-1]) {
 			foundLastBlock = true
 		}
 
@@ -762,16 +765,48 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 		blockLineAsBytes := scanner.Bytes()
 		// process the line
 		blockToValidate = new(MiningBlock)
-		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
+		err = m.unmarshalBlock(blockLineAsBytes, blockToValidate)
 		if err != nil {
 			infoLog.Println("error unmarshalling")
 			return nil, false, err
 		}
 		if !m.validateBlock(blockToValidate) {
-			infoLog.Println(blockToValidate)
+			infoLog.Println("Bad block failed validation: ", blockToValidate)
 			return nil, false, nil
 		}
 	}
 	lastValidatedBlock := blockToValidate
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
+}
+
+func (m *Miner) unmarshalBlock(data []byte, block *MiningBlock) error {
+	err := json.Unmarshal(data, block)
+	if err != nil {
+		return err
+	}
+	if block.Transactions == nil {
+		block.Transactions = []Transaction{}
+	}
+	return nil
+}
+
+func (m *Miner) compareBlocks(a, b MiningBlock) bool {
+	return a.SequenceNum == b.SequenceNum &&
+		a.MinerPublicKey == b.MinerPublicKey &&
+		a.Nonce == b.Nonce &&
+		a.PrevHash == b.PrevHash &&
+		a.CurrentHash == b.CurrentHash &&
+		m.compareTransactionsSlices(a.Transactions, b.Transactions)
+}
+
+func (m *Miner) compareTransactionsSlices(a, b []Transaction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
