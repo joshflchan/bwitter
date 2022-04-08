@@ -611,7 +611,6 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 }
 
 func (m *Miner) callGetUpToDateChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
-
 	var getChainResp GetExistingChainResp
 
 	peerRpcClient := m.PeersList[peerMiner]
