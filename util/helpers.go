@@ -1,11 +1,12 @@
 package util
 
 import (
+	"bufio"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net"
 	"os"
+	"strings"
 )
 
 // addrToSplit: address used to generate random available port; if empty string, then uses local address of the caller
@@ -44,9 +45,19 @@ func ReadJSONConfig(filename string, config interface{}) error {
 	return nil
 }
 
-func CheckErr(err error, errfmsg string, fargs ...interface{}) {
+func ParsePublicKey(publicKeyFilepath string) (string, error) {
+	f, err := os.Open(publicKeyFilepath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, errfmsg, fargs...)
-		os.Exit(1)
+		return "", err
 	}
+	defer f.Close()
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	keyWithNoDelimiters := lines[1 : len(lines)-1]
+	keyString := strings.Join(keyWithNoDelimiters[:], "")
+
+	return keyString, scanner.Err()
 }
