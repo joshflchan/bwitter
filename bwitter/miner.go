@@ -34,12 +34,14 @@ type Miner struct {
 	PeerFailed       chan *rpc.Client
 	ChainStorageFile string
 	broadcastChannel chan MiningBlock
-	BlocksSeen       map[string]bool // Hash of blocks seen
+	BlocksSeen       map[string]bool             // Hash of blocks seen
+	Ledger           map[string](map[string]int) // block hash: { publicKey: balance }
 
 	TransactionsList []Transaction
 }
 
 type Transaction struct {
+	Address   rsa.PublicKey
 	Timestamp string
 	Tweet     string
 }
@@ -213,9 +215,6 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	log.Println("POST msg received:", postArgs.MessageContents)
 	msgContent := postArgs.MessageContents + postArgs.Timestamp
 
-	// HERE ARE YOUR BYTES!!!!
-	// msgBytes := network.Bytes()
-
 	// hash
 	msgHash := sha256.New()
 	_, err := msgHash.Write([]byte(msgContent))
@@ -232,7 +231,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	}
 
 	// if decryption successful, create Transaction and add to list
-	transaction := Transaction{Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
+	transaction := Transaction{Address: postArgs.PublicKey, Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
 	// Not sure what this is for? Who uses that variable?
 	m.TransactionsList = append(m.TransactionsList, transaction)
 
@@ -282,6 +281,7 @@ func (m *Miner) mineBlock() {
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
+		m.generateBlockLedger(block)
 
 		var reply PropagateResponse
 		for i, peerConnection := range m.PeersList {
@@ -289,6 +289,19 @@ func (m *Miner) mineBlock() {
 			peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
 		}
 	}
+}
+
+func (m *Miner) generateBlockLedger(block MiningBlock) {
+	ledger := make(map[string]int)
+	if block.PrevHash != "" {
+		// overwrite new ledger if not genesis block. Troll?
+		ledger = m.Ledger[block.PrevHash]
+	}
+	for _, tx := range block.Transactions {
+		bal, ok = ledger[tx.Timestamp]
+		ledger
+	}
+
 }
 
 func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock, error) {
@@ -400,6 +413,10 @@ func (m *Miner) broadcastMinedBlock() {
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	log.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
+	if !m.validateBlock(propagateArgs.Block) {
+		log.Println("Not propagating this block")
+		return nil
+	}
 
 	// Propagate to peers
 	var reply PropagateResponse
