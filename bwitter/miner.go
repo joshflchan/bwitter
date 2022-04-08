@@ -43,6 +43,7 @@ type Miner struct {
 	ChainStorageFile   string
 	broadcastChannel   chan MiningBlock
 	BlocksSeen         map[string]bool // Hash of blocks seen
+	MaxSeqNumSeen      int
 
 	TransactionsList []Transaction
 	ThresholdBlocks  []MiningBlock
@@ -99,7 +100,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 20
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -352,6 +353,7 @@ func (m *Miner) mineBlock() {
 			// unlock here?
 			nonce++
 		}
+		m.BlocksSeen[block.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
@@ -424,6 +426,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	infoLog.Println("before zomg", minedBlock)
 	if _, err := os.Stat(OUTPUT_DIR); os.IsNotExist(err) {
 		if err := os.Mkdir(OUTPUT_DIR, os.ModePerm); err != nil {
 			infoLog.Printf("Unable to create dir ./%v: %v\n", OUTPUT_DIR, err)
@@ -438,6 +441,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 	chainStoragePath := OUTPUT_DIR + m.ChainStorageFile
 
 	stringToWrite := string(marshalledBlock)
+	infoLog.Println("ZOMG WTF IS THIS: ", stringToWrite)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
 		stringToWrite = "\n" + stringToWrite
 	}
@@ -478,6 +482,9 @@ retryPeer:
 		m.PeerFailed <- peerAddress
 	}
 
+	m.writeNewBlockToStorage(propagateArgs.Block)
+	m.createNewMiningBlock(propagateArgs.Block)
+
 	return nil
 }
 
@@ -491,7 +498,11 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
 	}
 	m.MiningBlock = MiningBlock{}
-	m.MiningBlock.SequenceNum = oldSeqNum + 1
+	if oldSeqNum+1 > m.MaxSeqNumSeen {
+		m.MiningBlock.SequenceNum = oldSeqNum + 1
+	} else {
+		m.MiningBlock.SequenceNum = m.MaxSeqNumSeen + 1
+	}
 	m.MiningBlock.PrevHash = prevHash
 	m.MiningBlock.MinerPublicKey = m.MinerPublicKey
 	copy(m.MiningBlock.Transactions, missingTransactions)
@@ -537,6 +548,7 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 
 	givenHashDecoded, _ := hex.DecodeString(block.CurrentHash)
 	copy(givenHash[:], givenHashDecoded)
+	tempCurrentHash := block.CurrentHash
 	block.CurrentHash = ""
 	blockBytes := convertBlockToBytes(*block)
 	computedHash = sha256.Sum256(blockBytes)
@@ -544,8 +556,11 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
 
+	isValid := computedHashInteger.Cmp(&givenHashInteger) == 0
+	block.CurrentHash = tempCurrentHash
+
 	// Check if the hash given is the same as the hash generate from the block
-	return computedHashInteger.Cmp(&givenHashInteger) == 0
+	return isValid
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
@@ -609,10 +624,15 @@ func (m *Miner) callGetUpToDateChain(peerMiner string, fileListenAddr string, do
 		lastValidatedBlock, isValid, err := m.validateUpToDateChainFromFile(chainFileToValidate)
 		if err == nil && isValid {
 			infoLog.Println("Chain from peer is valid!", peerMiner)
-			os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-			m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
+			// os.Remove(OUTPUT_DIR + m.ChainStorageFile)
+			err := os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+			if err != nil {
+				infoLog.Println("error in renaming", err)
+				return err
+			}
+			m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
 			return nil
-		} else if !isValid {
+		} else if err == nil && !isValid {
 			os.Remove(chainFileToValidate) // remove temp file if invalid
 			return ErrInvalidChain
 		} else {
@@ -624,7 +644,7 @@ func (m *Miner) callGetUpToDateChain(peerMiner string, fileListenAddr string, do
 
 func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bool, error) {
 	src, err := os.Open(filepath)
-	infoLog.Println("validating file at path:", filepath)
+	infoLog.Println("Rejoining Node: validating file at path:", filepath)
 	if err != nil {
 		return nil, false, err
 	}
@@ -643,7 +663,7 @@ func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bo
 			return nil, false, err
 		}
 
-		if blockToValidate == &m.ThresholdBlocks[len(m.ThresholdBlocks)] {
+		if blockToValidate == &m.ThresholdBlocks[len(m.ThresholdBlocks)-1] {
 			foundLastBlock = true
 		}
 
@@ -744,9 +764,11 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 		blockToValidate = new(MiningBlock)
 		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
 		if err != nil {
+			infoLog.Println("error unmarshalling")
 			return nil, false, err
 		}
 		if !m.validateBlock(blockToValidate) {
+			infoLog.Println(blockToValidate)
 			return nil, false, nil
 		}
 	}
