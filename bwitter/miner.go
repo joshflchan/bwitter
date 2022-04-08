@@ -134,12 +134,12 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 }
 
 func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
+	infoLog.Println("Begin Join Protocol")
 	// Get peers from Coord and add to peersList
 	newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers)
 	m.addNewMinerToPeersList(newRequestedPeers)
 	// Maintain peersList
 	go m.maintainPeersList()
-	log.Println("UM HELLO")
 
 	// TODO: Get entire blockchain from a peer
 	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
@@ -222,7 +222,7 @@ func (m *Miner) maintainPeersList() {
 		default: // continuously check for expected num peers to build robustness of network
 			lenOfExistingPeerList := uint64(len(m.PeersList))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
-				log.Println("not enough peers")
+				infoLog.Println("not enough peers, requesting more")
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
@@ -250,7 +250,7 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 			os.Exit(1)
 		}
 	}
-	log.Println("getPeers response: ", getPeersResponse)
+	infoLog.Println("getPeers response: ", getPeersResponse)
 	return getPeersResponse.NeighborAddrs
 }
 
@@ -298,15 +298,15 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	infoLog.Println("tx:", transaction)
 	// propagate op [JOSH]
-	log.Println("Propagating: ", postArgs)
+	infoLog.Println("Propagating: ", postArgs)
 	var reply util.PostResponse
 retryPeer:
 	for peerAddress, peerConnection := range m.PeersList {
-		log.Printf("Propagating to peer %v: %v", peerAddress, postArgs)
+		infoLog.Printf("Propagating to peer %v: %v", peerAddress, postArgs)
 		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 			err := peerConnection.Call("Miner.Post", postArgs, &reply)
 			if err != nil {
-				log.Println("Error from RPC Miner.Post", err)
+				infoLog.Println("Error from RPC Miner.Post", err)
 			} else {
 				continue retryPeer
 			}
@@ -352,12 +352,12 @@ func (m *Miner) mineBlock() {
 		var reply PropagateResponse
 	retryPeer:
 		for peerAddress, peerConnection := range m.PeersList {
-			log.Printf("Propogate block to peer %v", peerAddress)
+			infoLog.Printf("Propogate block to peer %v", peerAddress)
 
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
 				if err != nil {
-					log.Println("Error from Miner.PropagateBlock", err)
+					infoLog.Println("Error from Miner.PropagateBlock", err)
 				} else {
 					continue retryPeer
 				}
@@ -448,7 +448,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 }
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
-	log.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
+	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
 
 	if !m.validateBlock(&propagateArgs.Block) {
@@ -459,11 +459,11 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	var reply PropagateResponse
 retryPeer:
 	for peerAddress, peerConnection := range m.PeersList {
-		log.Printf("Propogate to peer %v", peerAddress)
+		infoLog.Printf("Propogate to peer %v", peerAddress)
 		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
 			err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
 			if err != nil {
-				log.Println("Error from RPC Miner.PropagateBlock", err)
+				infoLog.Println("Error from RPC Miner.PropagateBlock", err)
 			} else {
 				continue retryPeer
 			}
@@ -622,9 +622,9 @@ func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan str
 		errTransfer <- ErrStartFileServer
 	}
 	for { // continuousuly accept connections in case of retries
-		log.Println("accept")
+		infoLog.Println("accept")
 		conn, err := server.Accept() // waits until connection dialed from peer
-		log.Println("accept is not the problem")
+		infoLog.Println("accept is not the problem")
 		if err != nil {
 			infoLog.Println("There was an err with the file transfer connection", err)
 			errTransfer <- err
