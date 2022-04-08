@@ -1,0 +1,16 @@
+{
+    "MinerPublicKeyFile": "keys/miner3.rsa.pub",
+    "CoordAddress": "127.0.0.1:50082",
+    "MinerListenAddr": ":6973",
+    "ExpectedNumPeers": 3,
+    "ChainStorageFile": "chain3.txt",
+    "GenesisBlock": {
+        "SequenceNumber": 0,
+        "MinerPublicKey": "",
+        "Transactions": [],
+        "Nonce": 0,
+        "PrevHash": "",
+        "CurrentHash": ""
+    },
+    "RetryPeerThreshold": 3
+}

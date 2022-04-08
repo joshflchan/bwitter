@@ -45,7 +45,7 @@ func StartCoord(coordAddress string, coordRPCListenPort string, lostHeartbeatThr
 	coordRPCListener, err := net.Listen("tcp", c.CoordRPCListenAddress)
 	if err != nil {
 		log.Println(c.CoordRPCListenAddress)
-		log.Println("failed to listen RPC")
+		log.Println("failed to listen RPC", err)
 		return err
 	}
 	log.Println("Coord.Start: finished")
