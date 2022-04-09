@@ -42,13 +42,14 @@ type Miner struct {
 	PeerFailed         chan string
 	ChainStorageFile   string
 	broadcastChannel   chan MiningBlock
-	BlocksSeen         map[string]bool             // Hash of blocks seen
+	BlocksSeen         map[string]bool // Hash of blocks seen
+	PostsSeen          map[string]bool
 	Ledger             map[string](map[string]int) // block hash: { publicKey: balance }
 	TransactionsList   []Transaction
 }
 
 type Transaction struct {
-	Address   rsa.PublicKey
+	Address   string
 	Timestamp string
 	Tweet     string
 }
@@ -112,6 +113,8 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.RetryPeerThreshold = retryPeerThreshold
 	m.broadcastChannel = make(chan MiningBlock)
 	m.BlocksSeen = make(map[string]bool)
+	m.PostsSeen = make(map[string]bool)
+	m.Ledger = make(map[string]map[string]int)
 
 	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
 	if err != nil {
@@ -271,7 +274,15 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 
 // RPC Call for client
 func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error {
-	infoLog.Println("POST msg received:", postArgs.MessageContents)
+	infoLog.Println("POST msg received:", postArgs.PublicKey)
+
+	if _, ok := m.PostsSeen[postArgs.PublicKeyString+postArgs.Timestamp]; ok {
+		log.Println("seen")
+		return nil
+	} else {
+		m.PostsSeen[postArgs.PublicKeyString+postArgs.Timestamp] = true
+	}
+
 	msgContent := postArgs.MessageContents + postArgs.Timestamp
 
 	// hash
@@ -282,7 +293,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	}
 	msgHashSum := msgHash.Sum(nil)
 	// Attempt decryption
-	err = rsa.VerifyPSS(&postArgs.PublicKey, crypto.SHA256, msgHashSum, postArgs.SignedOperation, nil)
+	err = rsa.VerifyPSS(postArgs.PublicKey, crypto.SHA256, msgHashSum, postArgs.SignedOperation, nil)
 	// CheckErr(err, "Failed to verify signature: %v\n", err)
 	if err != nil {
 		infoLog.Println("Failed to verify signature for Post", err)
@@ -290,7 +301,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	}
 
 	// if decryption successful, create Transaction and add to list
-	transaction := Transaction{Address: postArgs.PublicKey, Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
+	transaction := Transaction{Address: postArgs.PublicKeyString, Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
 	// Not sure what this is for? Who uses that variable?
 	m.TransactionsList = append(m.TransactionsList, transaction)
 
@@ -370,16 +381,23 @@ func (m *Miner) mineBlock() {
 }
 
 func (m *Miner) generateBlockLedger(block MiningBlock) {
+	log.Println("generateblocledger")
 	ledger := make(map[string]int)
 	if block.PrevHash != "" {
 		// overwrite new ledger if not genesis block. Troll?
 		ledger = m.Ledger[block.PrevHash]
 	}
+
+	ledger[block.MinerPublicKey] += 1 + len(block.Transactions)
+
 	for _, tx := range block.Transactions {
-		bal, ok = ledger[tx.Timestamp]
-		ledger
+		bal, ok := ledger[tx.Address]
+		log.Println("the bal is", bal, ok)
 	}
 
+	log.Println("the ledger is", ledger)
+
+	m.Ledger[block.CurrentHash] = ledger
 }
 
 func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock, error) {
@@ -465,7 +483,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
 	// Validate the block
-	if !m.validateBlock(propagateArgs.Block) {
+	if !m.validateBlock(&propagateArgs.Block) {
 		log.Println("Not propagating this block")
 		return nil
 	}

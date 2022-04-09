@@ -5,7 +5,8 @@ import "crypto/rsa"
 type PostArgs struct {
 	MessageContents string
 	Timestamp       string
-	PublicKey       rsa.PublicKey
+	PublicKeyString string
+	PublicKey       *rsa.PublicKey
 	SignedOperation []byte
 }
 
