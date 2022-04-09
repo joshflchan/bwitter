@@ -190,6 +190,10 @@ ContinueJoinProtocol:
 		} else {
 			infoLog.Println("No peers available... using genesis block")
 			m.MiningBlock = genesisBlock
+			if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
+				infoLog.Println("REJEOIN PROTOCOL: remove existing chain storage file because no peers")
+				os.Remove(OUTPUT_DIR + m.ChainStorageFile)
+			}
 			break
 		}
 	}
@@ -531,6 +535,7 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	_, ok := m.BlocksSeen[block.CurrentHash]
 	if ok {
 		// seen this block already, ignore
+		infoLog.Println("Block has already been seen")
 		return false
 	}
 	// we can mark as seen even if this block would be found invalid in the future
@@ -716,9 +721,7 @@ func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan str
 		errTransfer <- ErrStartFileServer
 	}
 	for { // continuousuly accept connections in case of retries
-		infoLog.Println("accept")
 		conn, err := server.Accept() // waits until connection dialed from peer
-		infoLog.Println("accept is not the problem")
 		if err != nil {
 			infoLog.Println("There was an err with the file transfer connection", err)
 			errTransfer <- err
