@@ -43,8 +43,10 @@ type Miner struct {
 	ChainStorageFile   string
 	broadcastChannel   chan MiningBlock
 	BlocksSeen         map[string]bool // Hash of blocks seen
+	MaxSeqNumSeen      int
 
 	TransactionsList []Transaction
+	ThresholdBlocks  []MiningBlock
 }
 
 type Transaction struct {
@@ -163,15 +165,21 @@ ContinueJoinProtocol:
 				peerAddresses = append(peerAddresses, k)
 			}
 			peerMiner := peerAddresses[randomIndex]
+			m.ThresholdBlocks, err = m.getLastThresholdBlocksFromStorage(10)
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				err := m.callGetExistingChain(peerMiner, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
+				var getChainError error
 				if err != nil {
-					infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
-					if errors.Is(err, ErrInvalidChain) {
+					getChainError = m.callGetExistingChain(peerMiner, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
+				} else {
+					getChainError = m.callGetUpToDateChain(peerMiner, fileListenAddr, doneTransfer, errTransfer, prepTransfer)
+				}
+				if getChainError != nil {
+					infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", getChainError)
+					if errors.Is(getChainError, ErrInvalidChain) {
 						infoLog.Println("Removing peer from PeerList since given chain is invalid")
 						break
-					} else if errors.Is(err, ErrStartFileServer) {
-						return err
+					} else if errors.Is(getChainError, ErrStartFileServer) {
+						return getChainError
 					}
 					infoLog.Printf("Attempt %v to get existing chain from peer (%v) failed... Trying again\n", i+1, peerMiner)
 				} else {
@@ -182,6 +190,10 @@ ContinueJoinProtocol:
 		} else {
 			infoLog.Println("No peers available... using genesis block")
 			m.MiningBlock = genesisBlock
+			if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
+				infoLog.Println("REJEOIN PROTOCOL: remove existing chain storage file because no peers")
+				os.Remove(OUTPUT_DIR + m.ChainStorageFile)
+			}
 			break
 		}
 	}
@@ -345,6 +357,7 @@ func (m *Miner) mineBlock() {
 			// unlock here?
 			nonce++
 		}
+		m.BlocksSeen[block.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
@@ -391,7 +404,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 
 		if cursor != -1 && (char[0] == 10 || char[0] == 13) { // stop if we find a line
 			recvdLines++
-			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			err = m.unmarshalBlock([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
 			if err != nil {
 				infoLog.Printf("Unable to unmarshal line %d from bottom of file\n", recvdLines)
 				return nil, err
@@ -403,7 +416,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 		line = fmt.Sprintf("%s%s", string(char), line) // there is more efficient way
 
 		if cursor == -filesize { // stop if we are at the begining
-			err = json.Unmarshal([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
+			err = m.unmarshalBlock([]byte(line), &lastThresholdBlocks[threshold-recvdLines])
 			if err != nil {
 				infoLog.Println("Unable to unmarshal first line from bottom of file")
 				return nil, err
@@ -452,8 +465,10 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	// Validate the block
 
 	if !m.validateBlock(&propagateArgs.Block) {
+		infoLog.Println("Block is not valid")
 		return nil
 	}
+	infoLog.Println("Block is successfully validated")
 
 	// Propagate to peers
 	var reply PropagateResponse
@@ -470,6 +485,12 @@ retryPeer:
 		}
 		m.PeerFailed <- peerAddress
 	}
+	if propagateArgs.Block.Transactions == nil {
+		propagateArgs.Block.Transactions = []Transaction{}
+	}
+
+	m.writeNewBlockToStorage(propagateArgs.Block)
+	m.createNewMiningBlock(propagateArgs.Block)
 
 	return nil
 }
@@ -484,7 +505,11 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
 	}
 	m.MiningBlock = MiningBlock{}
-	m.MiningBlock.SequenceNum = oldSeqNum + 1
+	if oldSeqNum+1 > m.MaxSeqNumSeen {
+		m.MiningBlock.SequenceNum = oldSeqNum + 1
+	} else {
+		m.MiningBlock.SequenceNum = m.MaxSeqNumSeen + 1
+	}
 	m.MiningBlock.PrevHash = prevHash
 	m.MiningBlock.MinerPublicKey = m.MinerPublicKey
 	copy(m.MiningBlock.Transactions, missingTransactions)
@@ -510,6 +535,7 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	_, ok := m.BlocksSeen[block.CurrentHash]
 	if ok {
 		// seen this block already, ignore
+		infoLog.Println("Block has already been seen")
 		return false
 	}
 	// we can mark as seen even if this block would be found invalid in the future
@@ -530,6 +556,7 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 
 	givenHashDecoded, _ := hex.DecodeString(block.CurrentHash)
 	copy(givenHash[:], givenHashDecoded)
+	tempCurrentHash := block.CurrentHash
 	block.CurrentHash = ""
 	blockBytes := convertBlockToBytes(*block)
 	computedHash = sha256.Sum256(blockBytes)
@@ -537,8 +564,11 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
 
+	isValid := computedHashInteger.Cmp(&givenHashInteger) == 0
+	block.CurrentHash = tempCurrentHash
+
 	// Check if the hash given is the same as the hash generate from the block
-	return computedHashInteger.Cmp(&givenHashInteger) == 0
+	return isValid
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
@@ -585,6 +615,75 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 	return nil
 }
 
+func (m *Miner) callGetUpToDateChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
+	var getChainResp GetExistingChainResp
+
+	peerRpcClient := m.PeersList[peerMiner]
+	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+	if err != nil {
+		return err
+	} else {
+		prepTransfer <- true
+		infoLog.Println("Got existing chain from peer: ", peerMiner)
+
+		chainFileToValidate := <-doneTransfer
+
+		lastValidatedBlock, isValid, err := m.validateUpToDateChainFromFile(chainFileToValidate)
+		if err == nil && isValid {
+			infoLog.Println("Chain from peer is valid!", peerMiner)
+			// os.Remove(OUTPUT_DIR + m.ChainStorageFile)
+			err := os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
+			if err != nil {
+				infoLog.Println("error in renaming", err)
+				return err
+			}
+			m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
+			return nil
+		} else if err == nil && !isValid {
+			os.Remove(chainFileToValidate) // remove temp file if invalid
+			return ErrInvalidChain
+		} else {
+			os.Remove(chainFileToValidate) // rmove temp file if error
+			return err
+		}
+	}
+}
+
+func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bool, error) {
+	src, err := os.Open(filepath)
+	infoLog.Println("Rejoining Node: validating file at path:", filepath)
+	if err != nil {
+		return nil, false, err
+	}
+	defer src.Close()
+	// read line by line in case file large
+	scanner := bufio.NewScanner(src)
+	// Scan() reads next line and returns false when reached end or error
+	var blockToValidate *MiningBlock
+	foundLastBlock := false
+	for scanner.Scan() {
+		blockLineAsBytes := scanner.Bytes()
+		// process the line
+		blockToValidate = new(MiningBlock)
+		err = m.unmarshalBlock(blockLineAsBytes, blockToValidate)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if m.compareBlocks(*blockToValidate, m.ThresholdBlocks[len(m.ThresholdBlocks)-1]) {
+			foundLastBlock = true
+		}
+
+		if foundLastBlock {
+			if !m.validateBlock(blockToValidate) {
+				return nil, false, nil
+			}
+		}
+	}
+	lastValidatedBlock := blockToValidate
+	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
+}
+
 func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
 	var getChainResp GetExistingChainResp
 
@@ -622,9 +721,7 @@ func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan str
 		errTransfer <- ErrStartFileServer
 	}
 	for { // continuousuly accept connections in case of retries
-		infoLog.Println("accept")
 		conn, err := server.Accept() // waits until connection dialed from peer
-		infoLog.Println("accept is not the problem")
 		if err != nil {
 			infoLog.Println("There was an err with the file transfer connection", err)
 			errTransfer <- err
@@ -670,14 +767,48 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 		blockLineAsBytes := scanner.Bytes()
 		// process the line
 		blockToValidate = new(MiningBlock)
-		err = json.Unmarshal(blockLineAsBytes, blockToValidate)
+		err = m.unmarshalBlock(blockLineAsBytes, blockToValidate)
 		if err != nil {
+			infoLog.Println("error unmarshalling")
 			return nil, false, err
 		}
 		if !m.validateBlock(blockToValidate) {
+			infoLog.Println("Bad block failed validation: ", blockToValidate)
 			return nil, false, nil
 		}
 	}
 	lastValidatedBlock := blockToValidate
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
+}
+
+func (m *Miner) unmarshalBlock(data []byte, block *MiningBlock) error {
+	err := json.Unmarshal(data, block)
+	if err != nil {
+		return err
+	}
+	if block.Transactions == nil {
+		block.Transactions = []Transaction{}
+	}
+	return nil
+}
+
+func (m *Miner) compareBlocks(a, b MiningBlock) bool {
+	return a.SequenceNum == b.SequenceNum &&
+		a.MinerPublicKey == b.MinerPublicKey &&
+		a.Nonce == b.Nonce &&
+		a.PrevHash == b.PrevHash &&
+		a.CurrentHash == b.CurrentHash &&
+		m.compareTransactionsSlices(a.Transactions, b.Transactions)
+}
+
+func (m *Miner) compareTransactionsSlices(a, b []Transaction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
