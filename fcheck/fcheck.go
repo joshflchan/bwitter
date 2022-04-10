@@ -1,5 +1,12 @@
 /*
 
+This fcheck library is used from part of our group's A3 solution:
+https://github.students.cs.ubc.ca/CPSC416-2021W-T2/cpsc416_a3_joshc822_alika_ianmah/blob/main/fcheck/fcheck.go
+
+*/
+
+/*
+
 This package specifies the API to the failure checking library to be
 used in assignment 2 of UBC CS 416 2021W2.
 
