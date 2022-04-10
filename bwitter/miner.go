@@ -525,6 +525,12 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
+
+	if propagateArgs.Block.SequenceNum < m.MaxSeqNumSeen-10 {
+		log.Println("Not propagating this block - too old")
+		return nil
+	}
+
 	// Validate the block
 	if !m.validateBlock(&propagateArgs.Block) {
 		log.Println("Not propagating this block")
