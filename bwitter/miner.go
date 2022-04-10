@@ -85,9 +85,10 @@ type GetExistingChainResp struct {
 const OUTPUT_DIR = "out/"
 
 var (
-	ErrInvalidChain    = errors.New("chain from peer was invalid")
-	ErrStartFileServer = errors.New("failed to start file transfer server")
-	infoLog            *log.Logger
+	ErrInvalidChain      = errors.New("chain from peer was invalid")
+	ErrStartFileServer   = errors.New("failed to start file transfer server")
+	ErrInsufficientFunds = errors.New("miner does not have sufficient funds for this operation")
+	infoLog              *log.Logger
 )
 
 func NewMiner() *Miner {
@@ -315,8 +316,17 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 		return err
 	}
 
-	// if decryption successful, create Transaction and add to list
 	transaction := Transaction{Address: postArgs.PublicKeyString, Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
+
+	// Validate sufficient funds
+	if !m.validateSufficientFunds(transaction) {
+		return ErrInsufficientFunds
+	}
+
+	// Decrement funds
+	m.Ledger[m.MiningBlock.PrevHash][transaction.Address]--
+	infoLog.Println("New balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
+
 	// Not sure what this is for? Who uses that variable?
 	m.TransactionsList = append(m.TransactionsList, transaction)
 
@@ -504,6 +514,7 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 		return nil
 	}
 
+	// is this someone messing up a merge.....
 	if !m.validateBlock(&propagateArgs.Block) {
 		infoLog.Println("Block is not valid")
 		return nil
@@ -531,6 +542,7 @@ retryPeer:
 
 	m.writeNewBlockToStorage(propagateArgs.Block)
 	m.createNewMiningBlock(propagateArgs.Block)
+	m.generateBlockLedger(propagateArgs.Block)
 
 	return nil
 }
@@ -575,16 +587,28 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	_, ok := m.BlocksSeen[block.CurrentHash]
 	if ok {
 		// seen this block already, ignore
-		infoLog.Println("Block has already been seen")
+		infoLog.Println("Block rejected - already seen")
 		return false
 	}
 	// we can mark as seen even if this block would be found invalid in the future
 	m.BlocksSeen[block.CurrentHash] = true
-	// call validatePow
+
+	// Validate PoW
+	if !m.validatePoW(block) {
+		infoLog.Println("Block rejected - invalid PoW")
+		return false
+	}
+
 	// call some function that checks transactions are valid using previous balances
+	for _, transaction := range block.Transactions {
+		if !m.validateSufficientFunds(transaction) {
+			infoLog.Println("Block rejected - invalid transaction: ", transaction)
+			return false
+		}
+	}
 
 	// if valid, return true
-	return m.validatePoW(block)
+	return true
 }
 
 // Do we also wanna check difficulty?
@@ -609,6 +633,10 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 
 	// Check if the hash given is the same as the hash generate from the block
 	return isValid
+}
+
+func (m *Miner) validateSufficientFunds(transaction Transaction) bool {
+	return m.Ledger[m.MiningBlock.PrevHash][transaction.Address] >= 1
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
