@@ -50,8 +50,7 @@ type Miner struct {
 	Ledger     map[string](map[string]int) // block hash: { publicKey: balance }
 	CurrLedger map[string]int              // the most up-to-date ledger, used for keeping track of incoming operations
 
-	TransactionsList []Transaction
-	ThresholdBlocks  []MiningBlock
+	ThresholdBlocks []MiningBlock
 }
 
 type Transaction struct {
@@ -107,7 +106,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 19
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -321,15 +320,13 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	// Validate sufficient funds
 	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
+		infoLog.Println("INSUFFICIENT FUNDS")
 		return ErrInsufficientFunds
 	}
 
 	// Decrement funds
 	m.CurrLedger[transaction.Address]--
 	infoLog.Println("New balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
-
-	// Not sure what this is for? Who uses that variable?
-	m.TransactionsList = append(m.TransactionsList, transaction)
 
 	// This is what we want so that it gets mined
 	m.MiningBlock.Transactions = append(m.MiningBlock.Transactions, transaction)
@@ -359,7 +356,6 @@ retryPeer:
 // Assumes m.MiningBlock is set externally
 func (m *Miner) mineBlock() {
 	for {
-		infoLog.Println("Mining block: ", m.MiningBlock)
 		var block MiningBlock
 		var hashInteger big.Int
 		// is 32 necessary? maybe to chop off excess
@@ -385,9 +381,9 @@ func (m *Miner) mineBlock() {
 		}
 		m.BlocksSeen[block.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
+		m.generateBlockLedger(block)
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
-		m.generateBlockLedger(block)
 
 		var reply PropagateResponse
 	retryPeer:
@@ -415,7 +411,18 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		ledger = m.Ledger[block.PrevHash]
 	}
 
-	ledger[block.MinerPublicKey] += 1 + len(block.Transactions)
+	infoLog.Println("set ledger: ", ledger)
+	infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
+	infoLog.Println("num of transactions: ", len(block.Transactions))
+
+	if val, ok := ledger[block.MinerPublicKey]; ok {
+		infoLog.Println(val)
+		ledger[block.MinerPublicKey] = 1 + len(block.Transactions) + ledger[block.MinerPublicKey]
+	} else {
+		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
+	}
+
+	infoLog.Println("tell me it ain't so")
 
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
@@ -426,6 +433,14 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 	infoLog.Println("the ledger is", ledger)
 
 	m.Ledger[block.CurrentHash] = ledger
+
+	infoLog.Println("create ledger instance for currHash")
+
+	if block.SequenceNum > m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
+		m.CurrLedger = m.Ledger[block.CurrentHash]
+	}
+
+	infoLog.Println("Finish")
 }
 
 func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock, error) {
@@ -516,11 +531,6 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 		return nil
 	}
 
-	// is this someone messing up a merge.....
-	if !m.validateBlock(&propagateArgs.Block) {
-		infoLog.Println("Block is not valid")
-		return nil
-	}
 	infoLog.Println("Block is successfully validated")
 
 	// Propagate to peers
@@ -542,9 +552,9 @@ retryPeer:
 		propagateArgs.Block.Transactions = []Transaction{}
 	}
 
+	m.generateBlockLedger(propagateArgs.Block)
 	m.writeNewBlockToStorage(propagateArgs.Block)
 	m.createNewMiningBlock(propagateArgs.Block)
-	m.generateBlockLedger(propagateArgs.Block)
 
 	return nil
 }
@@ -602,11 +612,13 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	}
 
 	// call some function that checks transactions are valid using previous balances
+	ledgerCopy := m.Ledger[block.PrevHash]
 	for _, transaction := range block.Transactions {
-		if !m.validateSufficientFunds(transaction, m.Ledger[block.PrevHash]) {
+		if !m.validateSufficientFunds(transaction, ledgerCopy) {
 			infoLog.Println("Block rejected - invalid transaction: ", transaction)
 			return false
 		}
+		ledgerCopy[transaction.Address]--
 	}
 
 	// if valid, return true
@@ -638,6 +650,9 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 }
 
 func (m *Miner) validateSufficientFunds(transaction Transaction, ledger map[string](int)) bool {
+	infoLog.Println(transaction.Address)
+	infoLog.Println(ledger[transaction.Address])
+	infoLog.Println(ledger[transaction.Address] >= 1)
 	return ledger[transaction.Address] >= 1
 }
 
@@ -749,6 +764,7 @@ func (m *Miner) validateUpToDateChainFromFile(filepath string) (*MiningBlock, bo
 				return nil, false, nil
 			}
 		}
+		m.generateBlockLedger(*blockToValidate)
 	}
 	lastValidatedBlock := blockToValidate
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
@@ -846,6 +862,7 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 			infoLog.Println("Bad block failed validation: ", blockToValidate)
 			return nil, false, nil
 		}
+		m.generateBlockLedger(*blockToValidate)
 	}
 	lastValidatedBlock := blockToValidate
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
