@@ -46,8 +46,9 @@ type Miner struct {
 	BlocksSeen    map[string]bool // Hash of blocks seen
 	MaxSeqNumSeen int
 
-	PostsSeen map[string]bool
-	Ledger    map[string](map[string]int) // block hash: { publicKey: balance }
+	PostsSeen  map[string]bool
+	Ledger     map[string](map[string]int) // block hash: { publicKey: balance }
+	CurrLedger map[string]int              // the most up-to-date ledger, used for keeping track of incoming operations
 
 	TransactionsList []Transaction
 	ThresholdBlocks  []MiningBlock
@@ -319,12 +320,12 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	transaction := Transaction{Address: postArgs.PublicKeyString, Timestamp: postArgs.Timestamp, Tweet: postArgs.MessageContents}
 
 	// Validate sufficient funds
-	if !m.validateSufficientFunds(transaction) {
+	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
 		return ErrInsufficientFunds
 	}
 
 	// Decrement funds
-	m.Ledger[m.MiningBlock.PrevHash][transaction.Address]--
+	m.CurrLedger[transaction.Address]--
 	infoLog.Println("New balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
 
 	// Not sure what this is for? Who uses that variable?
@@ -407,7 +408,7 @@ func (m *Miner) mineBlock() {
 }
 
 func (m *Miner) generateBlockLedger(block MiningBlock) {
-	log.Println("generateblocledger")
+	infoLog.Println("generateblockledger")
 	ledger := make(map[string]int)
 	if block.PrevHash != "" {
 		// overwrite new ledger if not genesis block. Troll?
@@ -417,11 +418,12 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 	ledger[block.MinerPublicKey] += 1 + len(block.Transactions)
 
 	for _, tx := range block.Transactions {
-		bal, ok := ledger[tx.Address]
-		log.Println("the bal is", bal, ok)
+		ledger[tx.Address]--          // NOT for debugging, don't delete
+		bal, ok := ledger[tx.Address] // for debugging
+		infoLog.Println("the bal is", bal, ok)
 	}
 
-	log.Println("the ledger is", ledger)
+	infoLog.Println("the ledger is", ledger)
 
 	m.Ledger[block.CurrentHash] = ledger
 }
@@ -601,7 +603,7 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 
 	// call some function that checks transactions are valid using previous balances
 	for _, transaction := range block.Transactions {
-		if !m.validateSufficientFunds(transaction) {
+		if !m.validateSufficientFunds(transaction, m.Ledger[block.PrevHash]) {
 			infoLog.Println("Block rejected - invalid transaction: ", transaction)
 			return false
 		}
@@ -635,8 +637,8 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 	return isValid
 }
 
-func (m *Miner) validateSufficientFunds(transaction Transaction) bool {
-	return m.Ledger[m.MiningBlock.PrevHash][transaction.Address] >= 1
+func (m *Miner) validateSufficientFunds(transaction Transaction, ledger map[string](int)) bool {
+	return ledger[transaction.Address] >= 1
 }
 
 func startFCheckListenOnly(nodeAddr string) (string, error) {
