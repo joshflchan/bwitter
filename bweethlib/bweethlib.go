@@ -5,18 +5,22 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
 	"log"
 	"net"
 	"net/rpc"
+	"strings"
 	"time"
 
 	"cs.ubc.ca/cpsc416/p2/bwitter/util"
 )
 
 type Bweeth struct {
-	notifyCh   NotifyChannel
-	privateKey *rsa.PrivateKey
-	miner      *rpc.Client
+	notifyCh        NotifyChannel
+	PublicKeyString string
+	privateKey      *rsa.PrivateKey
+	miner           *rpc.Client
 }
 
 // NotifyChannel is used for notifying the client about a mining result.
@@ -39,6 +43,17 @@ func NewBweeth() *Bweeth {
 func (b *Bweeth) Start(privateKey *rsa.PrivateKey, minerIPPort string, chCapacity int) (NotifyChannel, error) {
 	b.privateKey = privateKey
 	b.notifyCh = make(chan ResultStruct, chCapacity)
+
+	keyPem := string(pem.EncodeToMemory(
+		&pem.Block{
+			Type:  "RSA PUBLIC KEY",
+			Bytes: x509.MarshalPKCS1PublicKey(b.privateKey.Public().(*rsa.PublicKey)),
+		},
+	))
+	keyLines := strings.Split(keyPem, "\n")
+	keyWithNoDelimiters := keyLines[1 : len(keyLines)-2]
+	keyString := strings.Join(keyWithNoDelimiters[:], "")
+	b.PublicKeyString = keyString
 
 	raddr, err := net.ResolveTCPAddr("tcp", minerIPPort)
 	if err != nil {
@@ -100,7 +115,8 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	b.miner.Call("Miner.Post", util.PostArgs{
 		MessageContents: msg,
 		Timestamp:       now.String(),
-		PublicKey:       b.privateKey.PublicKey,
+		PublicKey:       &b.privateKey.PublicKey,
+		PublicKeyString: b.PublicKeyString,
 		SignedOperation: signature},
 		&reply)
 	// TODO: process post
