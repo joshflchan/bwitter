@@ -110,7 +110,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 21
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -433,8 +433,6 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
 	}
 
-	infoLog.Println("tell me it ain't so") // wth is dis?
-
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
 		bal, ok := ledger[tx.Address] // for debugging
@@ -539,9 +537,6 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
-
-	// TODO: before propagating we need to block until validation is done
-	// i'm assuming the rpc calls will queue up under the hood i.e. we dont need a channel for actually queuing them
 
 	if propagateArgs.Block.SequenceNum < m.MaxSeqNumSeen-10 {
 		log.Println("Not propagating this block - too old")
@@ -789,6 +784,7 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 				infoLog.Println("Error from getLastBlockHashFromStorage", err)
 				return err
 			}
+			infoLog.Println("Last block hash to start validating from is:", lastBlockHash)
 			block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, lastBlockHash)
 			lastValidatedBlock = block
 			isValid = validation
@@ -802,6 +798,7 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 		}
 		if errFromValidate == nil && isValid {
 			infoLog.Println("Chain from peer is valid!", peerMiner)
+			os.Remove(OUTPUT_DIR + m.ChainStorageFile)                    // remove existing chain file
 			os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
 			m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
 			return nil
@@ -871,28 +868,30 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 	// read line by line in case file large
 	scanner := bufio.NewScanner(src)
 	// Scan() reads next line and returns false when reached end or error
-	var blockToValidate *MiningBlock
+	var blockFromStorage *MiningBlock
 	for scanner.Scan() {
+		// process the line
 		blockLineAsBytes := scanner.Bytes()
+		blockFromStorage = new(MiningBlock)
+		err = m.unmarshalBlock(blockLineAsBytes, blockFromStorage)
+		if err != nil {
+			infoLog.Println("error unmarshalling")
+			return nil, false, err
+		}
 		if !isLastBlockFound {
 			if strings.Contains(string(blockLineAsBytes), lastBlockHash) {
 				isLastBlockFound = true
 			}
+			infoLog.Println("loading own block hashes from storage back into memory:", blockFromStorage.CurrentHash)
+			m.BlocksSeen[blockFromStorage.CurrentHash] = true
 		} else {
-			// process the line
-			blockToValidate = new(MiningBlock)
-			err = m.unmarshalBlock(blockLineAsBytes, blockToValidate)
-			if err != nil {
-				infoLog.Println("error unmarshalling")
-				return nil, false, err
-			}
-			if !m.validateBlock(blockToValidate) {
+			if !m.validateBlock(blockFromStorage) {
 				return nil, false, nil
 			}
-			m.generateBlockLedger(*blockToValidate)
+			m.generateBlockLedger(*blockFromStorage)
 		}
 	}
-	lastValidatedBlock := blockToValidate
+	lastValidatedBlock := blockFromStorage
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
 
