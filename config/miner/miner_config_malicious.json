@@ -1,0 +1,16 @@
+{
+    "MinerPublicKeyFile": "keys/miner_mal.rsa.pub",
+    "CoordAddress": "127.0.0.1:50082",
+    "MinerListenAddr": ":6965",
+    "ExpectedNumPeers": 2,
+    "ChainStorageFile": "chainMal.txt",
+    "GenesisBlock": {
+        "SequenceNumber": 0,
+        "MinerPublicKey": "",
+        "Transactions": [],
+        "Nonce": 0,
+        "PrevHash": "",
+        "CurrentHash": ""
+    },
+    "RetryPeerThreshold": 3
+}
