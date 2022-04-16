@@ -21,6 +21,7 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	fchecker "cs.ubc.ca/cpsc416/p2/bwitter/fcheck"
@@ -35,6 +36,7 @@ type Miner struct {
 	ExpectedNumPeers   uint64
 	RetryPeerThreshold uint8
 	TargetBits         int
+	miningLock         sync.Mutex
 	Target             *big.Int
 	MiningBlock        MiningBlock
 	PeersList          map[string]*rpc.Client
@@ -66,6 +68,7 @@ type MiningBlock struct {
 	Nonce          int64
 	PrevHash       string
 	CurrentHash    string
+	Timestamp      time.Time
 }
 
 type PropagateArgs struct {
@@ -105,9 +108,9 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 		return err
 	}
 
-	// TODO READ TARGET BITS FROM CONFIG, SETS DIFFICULTY
+	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 21
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -237,7 +240,7 @@ func (m *Miner) maintainPeersList() {
 		default: // continuously check for expected num peers to build robustness of network
 			lenOfExistingPeerList := uint64(len(m.PeersList))
 			if lenOfExistingPeerList < m.ExpectedNumPeers {
-				infoLog.Println("not enough peers, requesting more")
+				// infoLog.Println("not enough peers, requesting more")
 				newRequestedPeers := m.callCoordGetPeers(m.ExpectedNumPeers - lenOfExistingPeerList)
 				m.addNewMinerToPeersList(newRequestedPeers)
 			}
@@ -265,7 +268,7 @@ func (m *Miner) callCoordGetPeers(numRequested uint64) []string {
 			os.Exit(1)
 		}
 	}
-	infoLog.Println("getPeers response: ", getPeersResponse)
+	// infoLog.Println("getPeers response: ", getPeersResponse)
 	return getPeersResponse.NeighborAddrs
 }
 
@@ -357,6 +360,7 @@ func (m *Miner) mineBlock() {
 		var hash [32]byte
 		nonce := int64(0)
 		for nonce < math.MaxInt64 {
+			m.miningLock.Lock()
 			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
 			block.Nonce = nonce
 			blockBytes := convertBlockToBytes(block)
@@ -367,12 +371,20 @@ func (m *Miner) mineBlock() {
 				if hashInteger.Cmp(m.Target) == -1 {
 					block.CurrentHash = hex.EncodeToString(hash[:])
 					infoLog.Println("MINED BLOCK: ", block)
+					m.miningLock.Unlock()
 					break
 				}
 
 			}
 			// unlock here?
 			nonce++
+
+			// if we havent found a nonce, try again from the start
+			// because we might have skipped over it as transactions were changing
+			if nonce == math.MaxInt64 {
+				nonce = 0
+			}
+			m.miningLock.Unlock()
 		}
 		m.BlocksSeen[block.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
@@ -380,6 +392,7 @@ func (m *Miner) mineBlock() {
 		m.createNewMiningBlock(block)
 		m.writeNewBlockToStorage(block)
 
+		// This should be a goroutine that we push channel to ->
 		var reply PropagateResponse
 	retryPeer:
 		for peerAddress, peerConnection := range m.PeersList {
@@ -400,10 +413,15 @@ func (m *Miner) mineBlock() {
 
 func (m *Miner) generateBlockLedger(block MiningBlock) {
 	infoLog.Println("generateblockledger")
+
 	ledger := make(map[string]int)
-	if block.PrevHash != "" {
-		// overwrite new ledger if not genesis block. Troll?
-		ledger = m.Ledger[block.PrevHash]
+	if block.SequenceNum != 0 {
+		ledger = copyMap(m.Ledger[block.PrevHash])
+		// we MUST have seen the prevHash before, otherwise we are not adding to the blockchain
+		if ledger == nil {
+			fmt.Println("VALIDATION DIDNT WORK")
+			os.Exit(1)
+		}
 	}
 
 	infoLog.Println("set ledger: ", ledger)
@@ -417,7 +435,7 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
 	}
 
-	infoLog.Println("tell me it ain't so")
+	infoLog.Println("tell me it ain't so") // wth is dis?
 
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
@@ -431,11 +449,20 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 
 	infoLog.Println("create ledger instance for currHash")
 
+	// TODO ANALYZE: > or >=
 	if block.SequenceNum > m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
-		m.CurrLedger = m.Ledger[block.CurrentHash]
+		m.CurrLedger = copyMap(ledger)
 	}
 
 	infoLog.Println("Finish")
+}
+
+func copyMap(originalMap map[string]int) map[string]int {
+	newMap := make(map[string]int)
+	for key, value := range originalMap {
+		newMap[key] = value
+	}
+	return newMap
 }
 
 // reading last line from file logic sourced from here: https://stackoverflow.com/a/51328256
@@ -479,6 +506,9 @@ func (m *Miner) getLastBlockHashFromStorage() (string, error) {
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	if minedBlock.SequenceNum > m.MaxSeqNumSeen {
+		m.MaxSeqNumSeen = minedBlock.SequenceNum
+	}
 	if _, err := os.Stat(OUTPUT_DIR); os.IsNotExist(err) {
 		if err := os.Mkdir(OUTPUT_DIR, os.ModePerm); err != nil {
 			infoLog.Printf("Unable to create dir ./%v: %v\n", OUTPUT_DIR, err)
@@ -511,7 +541,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
-
+	fmt.Println(m.MaxSeqNumSeen)
 	if propagateArgs.Block.SequenceNum < m.MaxSeqNumSeen-10 {
 		log.Println("Not propagating this block - too old")
 		return nil
@@ -524,6 +554,8 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	}
 
 	infoLog.Println("Block is successfully validated")
+	m.generateBlockLedger(propagateArgs.Block)
+	m.writeNewBlockToStorage(propagateArgs.Block)
 
 	// Propagate to peers
 	var reply PropagateResponse
@@ -544,10 +576,6 @@ retryPeer:
 		propagateArgs.Block.Transactions = []Transaction{}
 	}
 
-	m.generateBlockLedger(propagateArgs.Block)
-	m.writeNewBlockToStorage(propagateArgs.Block)
-	m.createNewMiningBlock(propagateArgs.Block)
-
 	return nil
 }
 
@@ -561,11 +589,14 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
 	}
 	m.MiningBlock = MiningBlock{}
+
+	// What is this stuff?????
 	if oldSeqNum+1 > m.MaxSeqNumSeen {
 		m.MiningBlock.SequenceNum = oldSeqNum + 1
 	} else {
 		m.MiningBlock.SequenceNum = m.MaxSeqNumSeen + 1
 	}
+	// shouldnt we update the max now?
 	m.MiningBlock.PrevHash = prevHash
 	m.MiningBlock.MinerPublicKey = m.MinerPublicKey
 	copy(m.MiningBlock.Transactions, missingTransactions)
@@ -592,10 +623,30 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	if ok {
 		// seen this block already, ignore
 		infoLog.Println("Block rejected - already seen")
+		fmt.Println(block)
 		return false
 	}
+	// if this isnt genesis block and it's pointing to a prevHash we have never seen, then this is a completely different chain
+	if block.SequenceNum != 0 {
+		_, ok := m.BlocksSeen[block.PrevHash]
+		if !ok {
+			infoLog.Println("Block rejected - is not building off any known hash")
+			fmt.Println(block)
+			return false
+		}
+	}
+
 	// we can mark as seen even if this block would be found invalid in the future
 	m.BlocksSeen[block.CurrentHash] = true
+
+	// check if this is the current block we are mining, lock because we might need to update
+	// avoids updating inflight after a broadcast has been triggered
+	isCurrentBlock := block.SequenceNum == m.MiningBlock.SequenceNum &&
+		block.PrevHash == m.MiningBlock.PrevHash
+	if isCurrentBlock {
+		m.miningLock.Lock()
+		defer m.miningLock.Unlock()
+	}
 
 	// Validate PoW
 	if !m.validatePoW(block) {
@@ -604,8 +655,12 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 	}
 
 	// call some function that checks transactions are valid using previous balances
-	ledgerCopy := m.Ledger[block.PrevHash]
+	ledgerCopy := copyMap(m.Ledger[block.PrevHash])
+
+	recvdBlockTransactionsSet := make(map[Transaction]struct{})
+	exists := struct{}{}
 	for _, transaction := range block.Transactions {
+		recvdBlockTransactionsSet[transaction] = exists
 		if !m.validateSufficientFunds(transaction, ledgerCopy) {
 			infoLog.Println("Block rejected - invalid transaction: ", transaction)
 			return false
@@ -613,11 +668,25 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 		ledgerCopy[transaction.Address]--
 	}
 
+	if isCurrentBlock {
+		// update because we passed the checks
+		missingTransactions := []Transaction{}
+		for _, transaction := range m.MiningBlock.Transactions {
+			if _, ok := recvdBlockTransactionsSet[transaction]; !ok {
+				missingTransactions = append(missingTransactions, transaction)
+			}
+		}
+		m.MiningBlock = MiningBlock{}
+		m.MiningBlock.SequenceNum = block.SequenceNum + 1
+		m.MiningBlock.PrevHash = block.CurrentHash
+		m.MiningBlock.MinerPublicKey = m.MinerPublicKey
+		copy(m.MiningBlock.Transactions, missingTransactions)
+	}
+
 	// if valid, return true
 	return true
 }
 
-// Do we also wanna check difficulty?
 func (m *Miner) validatePoW(block *MiningBlock) bool {
 	var computedHash [32]byte
 	var computedHashInteger big.Int
@@ -630,15 +699,17 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 	block.CurrentHash = ""
 	blockBytes := convertBlockToBytes(*block)
 	computedHash = sha256.Sum256(blockBytes)
+	fmt.Println(hex.EncodeToString(computedHash[:]))
 	// Convert hash array to slice with [:]
 	computedHashInteger.SetBytes(computedHash[:])
 	givenHashInteger.SetBytes(givenHash[:])
 
 	isValid := computedHashInteger.Cmp(&givenHashInteger) == 0
+	isDifficultEnough := givenHashInteger.Cmp(m.Target) == -1
 	block.CurrentHash = tempCurrentHash
 
 	// Check if the hash given is the same as the hash generate from the block
-	return isValid
+	return isValid && isDifficultEnough
 }
 
 func (m *Miner) validateSufficientFunds(transaction Transaction, ledger map[string](int)) bool {
