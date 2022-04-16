@@ -110,7 +110,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 21
+	m.TargetBits = 18
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -155,7 +155,6 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// Maintain peersList
 	go m.maintainPeersList()
 
-	// TODO: Get entire blockchain from a peer
 	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
 	if err != nil {
 		infoLog.Println(err)
@@ -330,7 +329,6 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	m.MiningBlock.Transactions = append(m.MiningBlock.Transactions, transaction)
 
 	infoLog.Println("tx:", transaction)
-	// propagate op [JOSH]
 	infoLog.Println("Propagating: ", postArgs)
 	var reply util.PostResponse
 retryPeer:
@@ -541,10 +539,17 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
-	fmt.Println(m.MaxSeqNumSeen)
+
+	// TODO: before propagating we need to block until validation is done
+	// i'm assuming the rpc calls will queue up under the hood i.e. we dont need a channel for actually queuing them
+
 	if propagateArgs.Block.SequenceNum < m.MaxSeqNumSeen-10 {
 		log.Println("Not propagating this block - too old")
 		return nil
+	}
+
+	if propagateArgs.Block.Transactions == nil {
+		propagateArgs.Block.Transactions = []Transaction{}
 	}
 
 	// Validate the block
@@ -571,9 +576,6 @@ retryPeer:
 			}
 		}
 		m.PeerFailed <- peerAddress
-	}
-	if propagateArgs.Block.Transactions == nil {
-		propagateArgs.Block.Transactions = []Transaction{}
 	}
 
 	return nil
@@ -815,7 +817,7 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 
 func (m *Miner) startFileTransferServer(listenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) {
 	infoLog.Println("start listening")
-	server, err := net.Listen("tcp", listenAddr) // TODO: properly close connection
+	server, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		infoLog.Println("There was an err starting the file transfer server", err)
 		errTransfer <- ErrStartFileServer
@@ -900,6 +902,7 @@ func (m *Miner) unmarshalBlock(data []byte, block *MiningBlock) error {
 		return err
 	}
 	if block.Transactions == nil {
+		infoLog.Println("creating empty list of transactions for unmarshal")
 		block.Transactions = []Transaction{}
 	}
 	return nil
