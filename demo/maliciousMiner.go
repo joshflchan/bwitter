@@ -405,6 +405,7 @@ func (m *Miner) mineBlock() {
 			infoLog.Printf("Propogate block to peer %v", peerAddress)
 
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+				// THIS MAKES THE BLOCK INVALID
 				block.Nonce = 123124
 				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
 				if err != nil {
