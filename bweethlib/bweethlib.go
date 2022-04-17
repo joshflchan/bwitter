@@ -135,11 +135,13 @@ func (b *Bweeth) GetTweets() error {
 		return err
 	}
 
+	blockStack := reply.BlockStack
 	log.Println(reply.BlockStack)
 
-	for len(reply.BlockStack) > 0 {
-		blockTweets, _ := Pop(reply.BlockStack)
-		for tweet := range blockTweets {
+	for len(blockStack) > 0 {
+		var blockTweets []string
+		blockStack, blockTweets, _ = Pop(blockStack)
+		for _, tweet := range blockTweets {
 			log.Println(tweet)
 		}
 	}
@@ -164,13 +166,13 @@ func Push(stack [][]string, blockTweets []string) {
 }
 
 // Remove and return top element of stack. Return false if stack is empty.
-func Pop(stack [][]string) ([]string, bool) {
+func Pop(stack [][]string) ([][]string, []string, bool) {
 	if IsEmpty(stack) {
-		return nil, false
+		return stack, nil, false
 	} else {
 		index := len(stack) - 1   // Get the index of the top most element.
 		element := (stack)[index] // Index into the slice and obtain the element.
 		stack = (stack)[:index]   // Remove it from the stack by slicing it off.
-		return element, true
+		return stack, element, true
 	}
 }

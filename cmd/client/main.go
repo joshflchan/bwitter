@@ -45,4 +45,7 @@ func main() {
 		}
 		time.Sleep(10 * time.Second)
 	}
+	time.Sleep(60 * time.Second) // depends on difficulty
+	log.Println("Getting Tweets")
+	client.GetTweets()
 }
