@@ -1,8 +1,8 @@
 {
     "MinerPublicKeyFile": "keys/miner3.rsa.pub",
-    "CoordAddress": "127.0.0.1:50082",
-    "MinerListenAddr": ":6272",
-    "ExpectedNumPeers": 1,
+    "CoordAddress": "127.0.0.1:50083",
+    "MinerListenAddr": ":6983",
+    "ExpectedNumPeers": 5,
     "ChainStorageFile": "chain3.txt",
     "GenesisBlock": {
         "SequenceNumber": 0,

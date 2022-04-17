@@ -11,7 +11,7 @@ import (
 )
 
 const MINER_ID = "1"
-const MINER_ADDRESS = "127.0.0.1:6505"
+const MINER_ADDRESS = "127.0.0.1:6508"
 
 func main() {
 	pemString, err := ioutil.ReadFile("keys/miner" + MINER_ID + ".rsa")
@@ -34,17 +34,15 @@ func main() {
 		return
 	}
 
-	client.Post("Client 1 says: hello world")
-	time.Sleep(3 * time.Second)
-	client.Post("Client 1 says: tweeting")
-	time.Sleep(7 * time.Second)
-	client.Post("Client 1 says: 1 more for fun")
-	time.Sleep(10 * time.Second)
-	log.Println("Getting Tweets")
-	client.GetTweets()
-
-	for i := 0; i < 3; i++ {
-		result := <-notifCh
-		log.Println("NOTIFYCH RESULT:", result)
+	tweetsToPost := [3]string{"Client 1 says: hello world", "Client 1 says: tweeting", "Client 1 says: 1 more for fun"} // Intialized with values
+	for i := 0; i < len(tweetsToPost); i++ {
+		err := client.Post(tweetsToPost[i])
+		if err != nil {
+			log.Println("Failed to POST tweet:", err)
+		} else {
+			result := <-notifCh
+			log.Println("POST SENT:", result)
+		}
+		time.Sleep(10 * time.Second)
 	}
 }
