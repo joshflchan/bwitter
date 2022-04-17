@@ -24,14 +24,12 @@ func NewCoord() *Coord {
 	return &Coord{}
 }
 
-func StartCoord(coordAddress string, coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
+func StartCoord(coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 	log.Println("Coord.Start: begins")
 	c := NewCoord()
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	c.MinerPool = make(map[string]bool)
-	c.CoordAddress = coordAddress
-	c.CoordRPCListenAddress = coordAddress + ":" + coordRPCListenPort
 	c.lostHeartbeatThreshold = lostHeartbeatThreshold
 
 	log.Println("Coord.Start: registering Coord for RPC")
