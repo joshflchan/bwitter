@@ -11,7 +11,7 @@ import (
 )
 
 const MINER_ID = "1"
-const MINER_ADDRESS = "127.0.0.1:6505"
+const MINER_ADDRESS = "127.0.0.1:6508"
 
 func main() {
 	pemString, err := ioutil.ReadFile("keys/miner" + MINER_ID + ".rsa")

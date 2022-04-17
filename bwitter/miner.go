@@ -318,7 +318,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	// Validate sufficient funds
 	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
 		infoLog.Println("INSUFFICIENT FUNDS")
-		return ErrInsufficientFunds
+		return errors.New("miner does not have sufficient funds for this operation")
 	}
 
 	// Decrement funds
@@ -360,6 +360,7 @@ func (m *Miner) mineBlock() {
 		for nonce < math.MaxInt64 {
 			m.miningLock.Lock()
 			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
+			block.Timestamp = time.Now()
 			block.Nonce = nonce
 			blockBytes := convertBlockToBytes(block)
 			if blockBytes != nil {
@@ -385,7 +386,6 @@ func (m *Miner) mineBlock() {
 			m.miningLock.Unlock()
 		}
 		m.BlocksSeen[block.CurrentHash] = true
-		block.Timestamp = time.Now()
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.generateBlockLedger(block)
 		m.createNewMiningBlock(block)
