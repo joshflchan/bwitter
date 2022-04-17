@@ -1,6 +1,7 @@
 package bwitter
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -113,7 +114,9 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 }
 
 func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
-	hBeatLocalAddr, err := util.GetAddressWithUnusedPort("")
+	// TODO: HACK TO MAKE THIS WORK -> REVIEW LATER @ALI
+	hBeatLocalAddr, err := util.GetAddressWithUnusedPort("127.0.0.1:")
+	fmt.Println(hBeatLocalAddr)
 	if err != nil {
 		log.Println("Failed to get random port for fcheck hBeatLocalAddr", err)
 		return err

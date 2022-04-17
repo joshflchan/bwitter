@@ -1,4 +1,4 @@
 {
-    "CoordRPCListenPort": ":50082",
+    "CoordRPCListenPort": ":12332",
     "LostHeartbeatThreshold": 10
 }
