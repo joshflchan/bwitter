@@ -12,3 +12,11 @@ type PostArgs struct {
 
 type PostResponse struct {
 }
+
+type GetTweetsArgs struct {
+}
+
+type GetTweetsResponse struct {
+	BlockTweetsChannel chan []string
+	NotifyChannel      chan bool
+}

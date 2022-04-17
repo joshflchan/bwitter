@@ -355,6 +355,62 @@ retryPeer:
 	return nil
 }
 
+func (m *Miner) GetTweets(postArgs *util.GetTweetsArgs, response *util.GetTweetsResponse) {
+	blockTweetsChan := make(chan []string, 1)
+	notifyChan := make(chan bool, 1)
+	go m.sendBlockTransactions(blockTweetsChan, notifyChan)
+	response.BlockTweetsChannel = blockTweetsChan
+	response.NotifyChannel = notifyChan
+}
+
+func (m *Miner) sendBlockTransactions(blockTweetsChan chan []string, notifyChan chan bool) {
+	prevHash := m.MiningBlock.PrevHash
+	for prevHash != "" {
+		block, err := m.getBlock(prevHash)
+		if err != nil {
+			infoLog.Println("Failed to get block for hash: ", prevHash)
+			infoLog.Println(err)
+			return
+		}
+
+		var blockTweets []string
+		for _, tx := range block.Transactions {
+			blockTweets = append(blockTweets, tx.Tweet)
+		}
+
+		blockTweetsChan <- blockTweets
+	}
+
+	notifyChan <- true
+}
+
+func (m *Miner) getBlock(hashToFind string) (*MiningBlock, error) {
+	src, err := os.Open(m.ChainStorageFile)
+	infoLog.Println("Reading chain file: ", m.ChainStorageFile)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	scanner := bufio.NewScanner(src)
+	// Scan() reads next line and returns false when reached end or error
+	var block *MiningBlock
+	for scanner.Scan() {
+		blockLineAsBytes := scanner.Bytes()
+		// process the line
+		block = new(MiningBlock)
+		err = m.unmarshalBlock(blockLineAsBytes, block)
+		if err != nil {
+			return nil, err
+		}
+
+		if block.CurrentHash == hashToFind {
+			return block, nil
+		}
+	}
+
+	return nil, nil
+}
+
 // try a bunch of nonces on current block of transactions, as transactions change
 // Assumes m.MiningBlock is set externally
 func (m *Miner) mineBlock() {
