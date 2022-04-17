@@ -126,8 +126,51 @@ func (b *Bweeth) Post(msg string) error {
 	return nil
 }
 
+func (b *Bweeth) GetTweets() error {
+	var reply util.GetTweetsResponse
+	log.Println("Getting Tweets from miner")
+	err := b.miner.Call("Miner.GetTweets", util.GetTweetsArgs{}, &reply)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	log.Println(reply.BlockStack)
+
+	for len(reply.BlockStack) > 0 {
+		blockTweets, _ := Pop(reply.BlockStack)
+		for tweet := range blockTweets {
+			log.Println(tweet)
+		}
+	}
+
+	return nil
+}
+
 // Stop Stops the Bweet instance and from delivering any results via the notify-channel.
 // This call always succeeds.
 func (b *Bweeth) Stop() {
 	b.miner.Close()
+}
+
+// IsEmpty: check if stack is empty
+func IsEmpty(stack [][]string) bool {
+	return len(stack) == 0
+}
+
+// Push a new value onto the stack
+func Push(stack [][]string, blockTweets []string) {
+	stack = append(stack, blockTweets) // Simply append the new value to the end of the stack
+}
+
+// Remove and return top element of stack. Return false if stack is empty.
+func Pop(stack [][]string) ([]string, bool) {
+	if IsEmpty(stack) {
+		return nil, false
+	} else {
+		index := len(stack) - 1   // Get the index of the top most element.
+		element := (stack)[index] // Index into the slice and obtain the element.
+		stack = (stack)[:index]   // Remove it from the stack by slicing it off.
+		return element, true
+	}
 }

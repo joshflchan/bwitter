@@ -317,7 +317,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	// Validate sufficient funds
 	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
-		infoLog.Println("INSUFFICIENT FUNDS")
+		infoLog.Println("INSUFFICIENT FUNDS: ", m.CurrLedger[transaction.Address])
 		return errors.New("miner does not have sufficient funds for this operation")
 	}
 
@@ -346,6 +346,66 @@ retryPeer:
 	}
 
 	return nil
+}
+
+func (m *Miner) GetTweets(getTweetsArgs *util.GetTweetsArgs, response *util.GetTweetsResponse) error {
+	infoLog.Println("Received request for tweets!!")
+	response.BlockStack = m.createBlockStack()
+
+	return nil
+}
+
+func (m *Miner) createBlockStack() [][]string {
+	prevHash := m.MiningBlock.PrevHash
+	var blockStack [][]string
+	for prevHash != "" {
+		block, err := m.getBlock(prevHash)
+		if err != nil {
+			infoLog.Println("Failed to get block for hash: ", prevHash)
+			infoLog.Println(err)
+		}
+
+		var blockTweets []string
+		for _, tx := range block.Transactions {
+			blockTweets = append(blockTweets, tx.Tweet)
+		}
+
+		infoLog.Println("blockStack BEFORE push: ", blockStack)
+		blockStack = Push(blockStack, blockTweets)
+		infoLog.Println("blockStack AFTER push: ", blockStack)
+
+		prevHash = block.PrevHash
+	}
+
+	infoLog.Println(blockStack)
+	return blockStack
+}
+
+func (m *Miner) getBlock(hashToFind string) (*MiningBlock, error) {
+	src, err := os.Open(OUTPUT_DIR + m.ChainStorageFile)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	scanner := bufio.NewScanner(src)
+	// Scan() reads next line and returns false when reached end or error
+	var block *MiningBlock
+	for scanner.Scan() {
+		blockLineAsBytes := scanner.Bytes()
+		// process the line
+		block = new(MiningBlock)
+		err = m.unmarshalBlock(blockLineAsBytes, block)
+		if err != nil {
+			return nil, err
+		}
+
+		if block.CurrentHash == hashToFind {
+			infoLog.Println("find me", block)
+			return block, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // try a bunch of nonces on current block of transactions, as transactions change
@@ -423,9 +483,9 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		}
 	}
 
-	infoLog.Println("set ledger: ", ledger)
-	infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
-	infoLog.Println("num of transactions: ", len(block.Transactions))
+	// infoLog.Println("set ledger: ", ledger)
+	// infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
+	// infoLog.Println("num of transactions: ", len(block.Transactions))
 
 	if val, ok := ledger[block.MinerPublicKey]; ok {
 		infoLog.Println(val)
@@ -440,18 +500,12 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		infoLog.Println("the bal is", bal, ok)
 	}
 
-	infoLog.Println("the ledger is", ledger)
-
 	m.Ledger[block.CurrentHash] = ledger
-
-	infoLog.Println("create ledger instance for currHash")
 
 	// TODO ANALYZE: > or >=
 	if block.SequenceNum >= m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
 		m.CurrLedger = copyMap(ledger)
 	}
-
-	infoLog.Println("Finish")
 }
 
 func copyMap(originalMap map[string]int) map[string]int {
@@ -503,6 +557,7 @@ func (m *Miner) getLastBlockHashFromStorage() (string, error) {
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	infoLog.Println("Writing block to storage: ", minedBlock)
 	if minedBlock.SequenceNum > m.MaxSeqNumSeen {
 		m.MaxSeqNumSeen = minedBlock.SequenceNum
 	}
@@ -520,6 +575,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 	chainStoragePath := OUTPUT_DIR + m.ChainStorageFile
 
 	stringToWrite := string(marshalledBlock)
+	infoLog.Println("Stringified block: ", stringToWrite)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
 		stringToWrite = "\n" + stringToWrite
 	}
@@ -907,4 +963,47 @@ func (m *Miner) unmarshalBlock(data []byte, block *MiningBlock) error {
 		block.Transactions = []Transaction{}
 	}
 	return nil
+}
+
+func (m *Miner) compareBlocks(a, b MiningBlock) bool {
+	return a.SequenceNum == b.SequenceNum &&
+		a.MinerPublicKey == b.MinerPublicKey &&
+		a.Nonce == b.Nonce &&
+		a.PrevHash == b.PrevHash &&
+		a.CurrentHash == b.CurrentHash &&
+		m.compareTransactionsSlices(a.Transactions, b.Transactions)
+}
+
+func (m *Miner) compareTransactionsSlices(a, b []Transaction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// IsEmpty: check if stack is empty
+func IsEmpty(stack [][]string) bool {
+	return len(stack) == 0
+}
+
+// Push a new value onto the stack
+func Push(stack [][]string, blockTweets []string) [][]string {
+	return append(stack, blockTweets) // Simply append the new value to the end of the stack
+}
+
+// Remove and return top element of stack. Return false if stack is empty.
+func Pop(stack [][]string) ([]string, bool) {
+	if IsEmpty(stack) {
+		return nil, false
+	} else {
+		index := len(stack) - 1   // Get the index of the top most element.
+		element := (stack)[index] // Index into the slice and obtain the element.
+		stack = (stack)[:index]   // Remove it from the stack by slicing it off.
+		return element, true
+	}
 }

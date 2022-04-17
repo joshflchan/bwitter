@@ -12,3 +12,10 @@ type PostArgs struct {
 
 type PostResponse struct {
 }
+
+type GetTweetsArgs struct {
+}
+
+type GetTweetsResponse struct {
+	BlockStack [][]string
+}
