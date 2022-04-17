@@ -27,8 +27,7 @@ type Bweeth struct {
 type NotifyChannel chan ResultStruct
 
 type ResultStruct struct {
-	txId      string // this should be a combination of public key and timestamp
-	blockHash string
+	txId string // this should be a combination of public key and timestamp
 }
 
 func NewBweeth() *Bweeth {
@@ -81,19 +80,16 @@ func (b *Bweeth) Start(privateKey *rsa.PrivateKey, minerIPPort string, chCapacit
 	return b.notifyCh, nil
 }
 
-// Post  non-blocking request from the client
+// Post request from the client
 // In case there is an underlying issue (for example, miner cannot be reached),
 // this should return an appropriate err value, otherwise err should be set to nil. Note that this call is non-blocking.
 // The returned value must be delivered asynchronously to the client via the notify-channel channel returned in the Start call.
 // The string (txId) is used to identify this request and associate the returned value with this request.
-func (b *Bweeth) Post(msg string) (string, error) {
+func (b *Bweeth) Post(msg string) error {
 	// Encode (send) the value.
 	now := time.Now()
 	msgContent := msg + now.String()
 	log.Println("Client wants to send message:", msgContent)
-
-	// HERE ARE YOUR BYTES!!!!
-	// msgBytes := network.Bytes()
 
 	// https://www.sohamkamani.com/golang/rsa-encryption/#signing-and-verification
 	msgHash := sha256.New()
@@ -112,15 +108,22 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	}
 
 	var reply util.PostResponse
-	b.miner.Call("Miner.Post", util.PostArgs{
+	postTimestamp := now.String()
+	postErr := b.miner.Call("Miner.Post", util.PostArgs{
 		MessageContents: msg,
-		Timestamp:       now.String(),
+		Timestamp:       postTimestamp,
 		PublicKey:       &b.privateKey.PublicKey,
 		PublicKeyString: b.PublicKeyString,
 		SignedOperation: signature},
 		&reply)
-	// TODO: process post
-	return "TODO: txId", nil
+	if postErr != nil {
+		log.Println("Bweethlib POST error:", err)
+		return err
+	}
+	b.notifyCh <- ResultStruct{
+		txId: b.PublicKeyString + postTimestamp,
+	}
+	return nil
 }
 
 // Stop Stops the Bweet instance and from delivering any results via the notify-channel.

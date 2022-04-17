@@ -31,14 +31,14 @@ mkdir -p logs/
 echo "building go miner program..."
 go build -o bin/miner ./cmd/miner
 
-for i in $( seq 1 3); do
+for i in $( seq 2 $num_miner_configs); do
     if [[ $i == 1 ]]; then
         bin/miner --config ./config/miner/miner_config.json &
         echo "$!" >> $MINER_PID_FILE
         echo "========================================================================"
-        echo "sleeping for 3 seconds... so that first miner can mine geneis block; remove if want to test case where multiple nodes mine genesis block"
+        echo "sleeping for 60 seconds... so that first miner can mine geneis block; remove if want to test case where multiple nodes mine genesis block"
         echo "========================================================================"
-        sleep 5
+        sleep 60
     else
         bin/miner --config ./config/miner/miner_config$i.json &
         echo "$!" >> $MINER_PID_FILE

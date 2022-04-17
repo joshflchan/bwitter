@@ -110,7 +110,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 21
+	m.TargetBits = 22
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -385,6 +385,7 @@ func (m *Miner) mineBlock() {
 			m.miningLock.Unlock()
 		}
 		m.BlocksSeen[block.CurrentHash] = true
+		block.Timestamp = time.Now()
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.generateBlockLedger(block)
 		m.createNewMiningBlock(block)
@@ -446,7 +447,7 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 	infoLog.Println("create ledger instance for currHash")
 
 	// TODO ANALYZE: > or >=
-	if block.SequenceNum > m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
+	if block.SequenceNum >= m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
 		m.CurrLedger = copyMap(ledger)
 	}
 
@@ -796,11 +797,12 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 			isValid = validation
 			errFromValidate = err
 		}
-		if errFromValidate == nil && isValid {
+		if errFromValidate == nil && isValid && lastValidatedBlock != nil {
 			infoLog.Println("Chain from peer is valid!", peerMiner)
 			os.Remove(OUTPUT_DIR + m.ChainStorageFile)                    // remove existing chain file
 			os.Rename(chainFileToValidate, OUTPUT_DIR+m.ChainStorageFile) // rename temp file as new storage file
-			m.createNewMiningBlock(*lastValidatedBlock)                   // create new block based on last mined block
+			infoLog.Println("LAST VALIDATED BLOCK", lastValidatedBlock)
+			m.createNewMiningBlock(*lastValidatedBlock) // create new block based on last mined block
 			return nil
 		} else if !isValid {
 			os.Remove(chainFileToValidate) // remove temp file if invalid
