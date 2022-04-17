@@ -377,9 +377,9 @@ func (m *Miner) createBlockStack() [][]string {
 			blockTweets = append(blockTweets, tx.Tweet)
 		}
 
-		infoLog.Println("blockTweets BEFORE push: ", blockTweets)
-		Push(blockStack, blockTweets)
-		infoLog.Println("blockTweets AFTER push: ", blockTweets)
+		infoLog.Println("blockStack BEFORE push: ", blockStack)
+		blockStack = Push(blockStack, blockTweets)
+		infoLog.Println("blockStack AFTER push: ", blockStack)
 
 		prevHash = block.PrevHash
 	}
@@ -407,6 +407,7 @@ func (m *Miner) getBlock(hashToFind string) (*MiningBlock, error) {
 		}
 
 		if block.CurrentHash == hashToFind {
+			infoLog.Println("find me", block)
 			return block, nil
 		}
 	}
@@ -1037,8 +1038,8 @@ func IsEmpty(stack [][]string) bool {
 }
 
 // Push a new value onto the stack
-func Push(stack [][]string, blockTweets []string) {
-	stack = append(stack, blockTweets) // Simply append the new value to the end of the stack
+func Push(stack [][]string, blockTweets []string) [][]string {
+	return append(stack, blockTweets) // Simply append the new value to the end of the stack
 }
 
 // Remove and return top element of stack. Return false if stack is empty.
