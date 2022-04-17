@@ -11,7 +11,7 @@ import (
 )
 
 const MINER_ID = "2"
-const MINER_ADDRESS = "127.0.0.1:6972"
+const MINER_ADDRESS = "127.0.0.1:6982"
 
 func main() {
 	pemString, err := ioutil.ReadFile("keys/miner" + MINER_ID + ".rsa")
@@ -42,6 +42,6 @@ func main() {
 
 	for i := 0; i < 3; i++ {
 		result := <-notifCh
-		log.Println("NOTIFYCH RESULT:", result)
+		log.Println("POST SENT:", result)
 	}
 }
