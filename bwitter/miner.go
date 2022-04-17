@@ -109,7 +109,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 21
+	m.TargetBits = 19
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -323,7 +323,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 
 	// Validate sufficient funds
 	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
-		infoLog.Println("INSUFFICIENT FUNDS")
+		infoLog.Println("INSUFFICIENT FUNDS: ", m.CurrLedger[transaction.Address])
 		return ErrInsufficientFunds
 	}
 
@@ -355,22 +355,21 @@ retryPeer:
 	return nil
 }
 
-func (m *Miner) GetTweets(postArgs *util.GetTweetsArgs, response *util.GetTweetsResponse) {
-	blockTweetsChan := make(chan []string, 1)
-	notifyChan := make(chan bool, 1)
-	go m.sendBlockTransactions(blockTweetsChan, notifyChan)
-	response.BlockTweetsChannel = blockTweetsChan
-	response.NotifyChannel = notifyChan
+func (m *Miner) GetTweets(getTweetsArgs *util.GetTweetsArgs, response *util.GetTweetsResponse) error {
+	infoLog.Println("Received request for tweets!!")
+	response.BlockStack = m.createBlockStack()
+
+	return nil
 }
 
-func (m *Miner) sendBlockTransactions(blockTweetsChan chan []string, notifyChan chan bool) {
+func (m *Miner) createBlockStack() [][]string {
 	prevHash := m.MiningBlock.PrevHash
+	var blockStack [][]string
 	for prevHash != "" {
 		block, err := m.getBlock(prevHash)
 		if err != nil {
 			infoLog.Println("Failed to get block for hash: ", prevHash)
 			infoLog.Println(err)
-			return
 		}
 
 		var blockTweets []string
@@ -378,15 +377,19 @@ func (m *Miner) sendBlockTransactions(blockTweetsChan chan []string, notifyChan 
 			blockTweets = append(blockTweets, tx.Tweet)
 		}
 
-		blockTweetsChan <- blockTweets
+		infoLog.Println("blockTweets BEFORE push: ", blockTweets)
+		Push(blockStack, blockTweets)
+		infoLog.Println("blockTweets AFTER push: ", blockTweets)
+
+		prevHash = block.PrevHash
 	}
 
-	notifyChan <- true
+	infoLog.Println(blockStack)
+	return blockStack
 }
 
 func (m *Miner) getBlock(hashToFind string) (*MiningBlock, error) {
-	src, err := os.Open(m.ChainStorageFile)
-	infoLog.Println("Reading chain file: ", m.ChainStorageFile)
+	src, err := os.Open(OUTPUT_DIR + m.ChainStorageFile)
 	if err != nil {
 		return nil, err
 	}
@@ -485,9 +488,9 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		}
 	}
 
-	infoLog.Println("set ledger: ", ledger)
-	infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
-	infoLog.Println("num of transactions: ", len(block.Transactions))
+	// infoLog.Println("set ledger: ", ledger)
+	// infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
+	// infoLog.Println("num of transactions: ", len(block.Transactions))
 
 	if val, ok := ledger[block.MinerPublicKey]; ok {
 		infoLog.Println(val)
@@ -496,26 +499,18 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
 	}
 
-	infoLog.Println("tell me it ain't so") // wth is dis?
-
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
 		bal, ok := ledger[tx.Address] // for debugging
 		infoLog.Println("the bal is", bal, ok)
 	}
 
-	infoLog.Println("the ledger is", ledger)
-
 	m.Ledger[block.CurrentHash] = ledger
-
-	infoLog.Println("create ledger instance for currHash")
 
 	// TODO ANALYZE: > or >=
 	if block.SequenceNum > m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
 		m.CurrLedger = copyMap(ledger)
 	}
-
-	infoLog.Println("Finish")
 }
 
 func copyMap(originalMap map[string]int) map[string]int {
@@ -577,6 +572,7 @@ func (m *Miner) getLastThresholdBlocksFromStorage(threshold int) ([]MiningBlock,
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
+	infoLog.Println("Writing block to storage: ", minedBlock)
 	if minedBlock.SequenceNum > m.MaxSeqNumSeen {
 		m.MaxSeqNumSeen = minedBlock.SequenceNum
 	}
@@ -594,6 +590,7 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 	chainStoragePath := OUTPUT_DIR + m.ChainStorageFile
 
 	stringToWrite := string(marshalledBlock)
+	infoLog.Println("Stringified block: ", stringToWrite)
 	if _, err := os.Stat(chainStoragePath); !os.IsNotExist(err) {
 		stringToWrite = "\n" + stringToWrite
 	}
@@ -1032,4 +1029,26 @@ func (m *Miner) compareTransactionsSlices(a, b []Transaction) bool {
 		}
 	}
 	return true
+}
+
+// IsEmpty: check if stack is empty
+func IsEmpty(stack [][]string) bool {
+	return len(stack) == 0
+}
+
+// Push a new value onto the stack
+func Push(stack [][]string, blockTweets []string) {
+	stack = append(stack, blockTweets) // Simply append the new value to the end of the stack
+}
+
+// Remove and return top element of stack. Return false if stack is empty.
+func Pop(stack [][]string) ([]string, bool) {
+	if IsEmpty(stack) {
+		return nil, false
+	} else {
+		index := len(stack) - 1   // Get the index of the top most element.
+		element := (stack)[index] // Index into the slice and obtain the element.
+		stack = (stack)[:index]   // Remove it from the stack by slicing it off.
+		return element, true
+	}
 }

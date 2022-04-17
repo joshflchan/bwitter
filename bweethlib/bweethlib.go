@@ -112,36 +112,40 @@ func (b *Bweeth) Post(msg string) (string, error) {
 	}
 
 	var reply util.PostResponse
-	b.miner.Call("Miner.Post", util.PostArgs{
+	err = b.miner.Call("Miner.Post", util.PostArgs{
 		MessageContents: msg,
 		Timestamp:       now.String(),
 		PublicKey:       &b.privateKey.PublicKey,
 		PublicKeyString: b.PublicKeyString,
 		SignedOperation: signature},
 		&reply)
+
+	if err != nil {
+		log.Println(err)
+	}
 	// TODO: process post
 	return "TODO: txId", nil
 }
 
-func (b *Bweeth) GetTweets() {
+func (b *Bweeth) GetTweets() error {
 	var reply util.GetTweetsResponse
-	b.miner.Call("Miner.GetTweets", util.GetTweetsArgs{}, &reply)
+	log.Println("Getting Tweets from miner")
+	err := b.miner.Call("Miner.GetTweets", util.GetTweetsArgs{}, &reply)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
 
-	var stack [][]string
-	for {
-		select {
-		case <-reply.NotifyChannel:
-			for len(stack) > 0 {
-				blockTweets, _ := Pop(stack)
-				for tweet := range blockTweets {
-					log.Println(tweet)
-				}
-			}
-			return
-		case blockTweets := <-reply.BlockTweetsChannel:
-			Push(stack, blockTweets)
+	log.Println(reply.BlockStack)
+
+	for len(reply.BlockStack) > 0 {
+		blockTweets, _ := Pop(reply.BlockStack)
+		for tweet := range blockTweets {
+			log.Println(tweet)
 		}
 	}
+
+	return nil
 }
 
 // Stop Stops the Bweet instance and from delivering any results via the notify-channel.

@@ -39,6 +39,9 @@ func main() {
 	client.Post("Client 1 says: tweeting")
 	time.Sleep(7 * time.Second)
 	client.Post("Client 1 says: 1 more for fun")
+	time.Sleep(10 * time.Second)
+	log.Println("Getting Tweets")
+	client.GetTweets()
 
 	for i := 0; i < 3; i++ {
 		result := <-notifCh

@@ -17,6 +17,5 @@ type GetTweetsArgs struct {
 }
 
 type GetTweetsResponse struct {
-	BlockTweetsChannel chan []string
-	NotifyChannel      chan bool
+	BlockStack [][]string
 }
