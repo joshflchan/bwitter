@@ -40,9 +40,9 @@ func StartCoord(coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 	}
 
 	log.Println("Coord.Start: setting up RPC listener")
-	coordRPCListener, err := net.Listen("tcp", c.CoordRPCListenAddress)
+	coordRPCListener, err := net.Listen("tcp", coordRPCListenPort)
 	if err != nil {
-		log.Println(c.CoordRPCListenAddress)
+		log.Println(coordRPCListenPort)
 		log.Println("failed to listen RPC", err)
 		return err
 	}
