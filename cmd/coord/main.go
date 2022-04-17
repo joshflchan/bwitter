@@ -10,7 +10,6 @@ import (
 )
 
 type CoordConfig struct {
-	CoordAddress           string
 	CoordRPCListenPort     string
 	LostHeartbeatThreshold uint8
 }
@@ -18,7 +17,7 @@ type CoordConfig struct {
 func main() {
 	coordConfig := ReadConfig("config/coord_config.json")
 
-	err := bwitter.StartCoord(coordConfig.CoordAddress, coordConfig.CoordRPCListenPort, coordConfig.LostHeartbeatThreshold)
+	err := bwitter.StartCoord(coordConfig.CoordRPCListenPort, coordConfig.LostHeartbeatThreshold)
 	CheckErr(err, "unable to start coord")
 }
 

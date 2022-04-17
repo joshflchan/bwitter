@@ -24,14 +24,12 @@ func NewCoord() *Coord {
 	return &Coord{}
 }
 
-func StartCoord(coordAddress string, coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
+func StartCoord(coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 	log.Println("Coord.Start: begins")
 	c := NewCoord()
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	c.MinerPool = make(map[string]bool)
-	c.CoordAddress = coordAddress
-	c.CoordRPCListenAddress = coordAddress + ":" + coordRPCListenPort
 	c.lostHeartbeatThreshold = lostHeartbeatThreshold
 
 	log.Println("Coord.Start: registering Coord for RPC")
@@ -42,9 +40,9 @@ func StartCoord(coordAddress string, coordRPCListenPort string, lostHeartbeatThr
 	}
 
 	log.Println("Coord.Start: setting up RPC listener")
-	coordRPCListener, err := net.Listen("tcp", c.CoordRPCListenAddress)
+	coordRPCListener, err := net.Listen("tcp", coordRPCListenPort)
 	if err != nil {
-		log.Println(c.CoordRPCListenAddress)
+		log.Println(coordRPCListenPort)
 		log.Println("failed to listen RPC", err)
 		return err
 	}
@@ -115,7 +113,7 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 }
 
 func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
-	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(c.CoordRPCListenAddress)
+	hBeatLocalAddr, err := util.GetAddressWithUnusedPort("")
 	if err != nil {
 		log.Println("Failed to get random port for fcheck hBeatLocalAddr", err)
 		return err
