@@ -110,7 +110,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 22
+	m.TargetBits = 20
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -417,10 +417,10 @@ func (m *Miner) mineBlock() {
 		// is 32 necessary? maybe to chop off excess
 		var hash [32]byte
 		nonce := int64(0)
+		block.Timestamp = time.Now()
 		for nonce < math.MaxInt64 {
 			m.miningLock.Lock()
 			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
-			block.Timestamp = time.Now()
 			block.Nonce = nonce
 			blockBytes := convertBlockToBytes(block)
 			if blockBytes != nil {
@@ -828,31 +828,30 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 		prepTransfer <- true
 		infoLog.Println("Got existing chain from peer: ", peerMiner)
 
-		var (
-			lastValidatedBlock *MiningBlock
-			isValid            bool
-			errFromValidate    error
-		)
 		chainFileToValidate := <-doneTransfer
-		if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
-			infoLog.Println("REJEOIN PROTOCOL: checking for last block hash")
-			lastBlockHash, err := m.getLastBlockHashFromStorage()
-			if err != nil {
-				infoLog.Println("Error from getLastBlockHashFromStorage", err)
-				return err
-			}
-			infoLog.Println("Last block hash to start validating from is:", lastBlockHash)
-			block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, lastBlockHash)
-			lastValidatedBlock = block
-			isValid = validation
-			errFromValidate = err
-		} else {
-			infoLog.Println("JOIN PROTOCOL: validating entire existing chain from peer")
-			block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, "")
-			lastValidatedBlock = block
-			isValid = validation
-			errFromValidate = err
-		}
+		// if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
+		// 	infoLog.Println("REJEOIN PROTOCOL: checking for last block hash")
+		// 	lastBlockHash, err := m.getLastBlockHashFromStorage()
+		// 	if err != nil {
+		// 		infoLog.Println("Error from getLastBlockHashFromStorage", err)
+		// 		return err
+		// 	}
+		// 	infoLog.Println("Last block hash to start validating from is:", lastBlockHash)
+		// 	block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, lastBlockHash)
+		// 	lastValidatedBlock = block
+		// 	isValid = validation
+		// 	errFromValidate = err
+		// } else {
+		// 	infoLog.Println("JOIN PROTOCOL: validating entire existing chain from peer")
+		// 	block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, "")
+		// 	lastValidatedBlock = block
+		// 	isValid = validation
+		// 	errFromValidate = err
+		// }
+
+		infoLog.Println("JOIN/REJOIN PROTOCOL: validating entire existing chain from peer")
+		lastValidatedBlock, isValid, errFromValidate := m.validateExistingChainFromFile(chainFileToValidate)
+
 		if errFromValidate == nil && isValid && lastValidatedBlock != nil {
 			infoLog.Println("Chain from peer is valid!", peerMiner)
 			os.Remove(OUTPUT_DIR + m.ChainStorageFile)                    // remove existing chain file
@@ -908,15 +907,7 @@ func (m *Miner) transferBlockchainFile(conn net.Conn, doneTransfer chan string, 
 	doneTransfer <- file.Name()
 }
 
-func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash string) (*MiningBlock, bool, error) {
-	// if not lastBlockHash, then it is an initial join and no need to scan for a matching hash
-	var isLastBlockFound bool
-	if lastBlockHash == "" {
-		isLastBlockFound = true
-	} else {
-		isLastBlockFound = false
-	}
-
+func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bool, error) {
 	src, err := os.Open(filepath)
 	infoLog.Println("validating file at path:", filepath)
 	if err != nil {
@@ -927,6 +918,8 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 	scanner := bufio.NewScanner(src)
 	// Scan() reads next line and returns false when reached end or error
 	var blockFromStorage *MiningBlock
+	largestSeqNumSoFar := 0
+	var lastValidatedBlock *MiningBlock // LAST BLOCK ON LONGEST CHAIN (LARGEST SEQNUM)
 	for scanner.Scan() {
 		// process the line
 		blockLineAsBytes := scanner.Bytes()
@@ -936,20 +929,16 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 			infoLog.Println("error unmarshalling")
 			return nil, false, err
 		}
-		if !isLastBlockFound {
-			if strings.Contains(string(blockLineAsBytes), lastBlockHash) {
-				isLastBlockFound = true
-			}
-			infoLog.Println("loading own block hashes from storage back into memory:", blockFromStorage.CurrentHash)
-			m.BlocksSeen[blockFromStorage.CurrentHash] = true
-		} else {
-			if !m.validateBlock(blockFromStorage) {
-				return nil, false, nil
-			}
-			m.generateBlockLedger(*blockFromStorage)
+
+		if !m.validateBlock(blockFromStorage) {
+			return nil, false, nil
+		}
+		m.generateBlockLedger(*blockFromStorage)
+		if blockFromStorage.SequenceNum >= largestSeqNumSoFar {
+			lastValidatedBlock = blockFromStorage
+			largestSeqNumSoFar = blockFromStorage.SequenceNum
 		}
 	}
-	lastValidatedBlock := blockFromStorage
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
 
