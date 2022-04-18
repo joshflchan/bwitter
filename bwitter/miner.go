@@ -488,10 +488,6 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		}
 	}
 
-	// infoLog.Println("set ledger: ", ledger)
-	// infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
-	// infoLog.Println("num of transactions: ", len(block.Transactions))
-
 	if val, ok := ledger[block.MinerPublicKey]; ok {
 		infoLog.Println(val)
 		// a miner gets 1 bweeth for mining a block + n bweeth for n transactions on the mined block
@@ -499,10 +495,6 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 	} else {
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
 	}
-
-	infoLog.Println("ledger:", ledger)
-	infoLog.Println("publickey:", block.MinerPublicKey)
-	infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
 
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
