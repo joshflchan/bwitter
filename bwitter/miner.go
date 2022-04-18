@@ -512,12 +512,12 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 
 	m.Ledger[block.CurrentHash] = copyMap(ledger)
 
-	if block.SequenceNum == m.MiningBlock.SequenceNum && block.PrevHash == m.MiningBlock.PrevHash {
-		m.CurrLedger = copyMap(ledger)
-		infoLog.Println("copy ledger to currLedger")
-	} else {
-		infoLog.Println("did not copy ledger to currLedger")
-	}
+	// if block.SequenceNum == m.MiningBlock.SequenceNum && block.PrevHash == m.MiningBlock.PrevHash {
+	m.CurrLedger = copyMap(ledger)
+	// infoLog.Println("copy ledger to currLedger")
+	// } else {
+	// 	infoLog.Println("did not copy ledger to currLedger")
+	// }
 }
 
 func copyMap(originalMap map[string]int) map[string]int {
@@ -623,7 +623,6 @@ func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *Propagate
 	}
 
 	infoLog.Println("Block is successfully validated")
-	m.generateBlockLedger(propagateArgs.Block)
 	m.writeNewBlockToStorage(propagateArgs.Block)
 
 	// Propagate to peers
@@ -654,7 +653,6 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 	if totalTransactions > minedTransactions {
 		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
 	}
-	infoLog.Println("MissingTransactions in createNewMiningBlock:", missingTransactions)
 	m.MiningBlock = MiningBlock{}
 
 	// What is this stuff?????
@@ -667,7 +665,6 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 	m.MiningBlock.PrevHash = prevHash
 	// m.MiningBlock.MinerPublicKey = m.MinerPublicKey --> moved to mineBlock
 	copy(m.MiningBlock.Transactions, missingTransactions)
-	infoLog.Println("New mining blocks transactions:", m.MiningBlock.Transactions)
 }
 
 func convertBlockToBytes(block MiningBlock) []byte {
@@ -736,26 +733,22 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 		ledgerCopy[transaction.Address]--
 	}
 
-	// TODO: PUT LOGS
 	if isCurrentBlock {
 		// update because we passed the checks
 		missingTransactions := []Transaction{}
-		infoLog.Println("current block transactions:", m.MiningBlock.Transactions)
 		for _, transaction := range m.MiningBlock.Transactions {
 			if _, ok := recvdBlockTransactionsSet[transaction]; !ok {
 				missingTransactions = append(missingTransactions, transaction)
 			}
 		}
+		m.generateBlockLedger(*block)
 		m.MiningBlock = MiningBlock{}
-		infoLog.Println("current block", m.MiningBlock)
 		m.MiningBlock.SequenceNum = block.SequenceNum + 1
 		m.MiningBlock.PrevHash = block.CurrentHash
 		m.MiningBlock.MinerPublicKey = m.MinerPublicKey
-		infoLog.Println("Missing transactions:", missingTransactions)
 		copy(m.MiningBlock.Transactions, missingTransactions)
-		infoLog.Println("current block transactions:", m.MiningBlock.Transactions)
 	} else {
-		infoLog.Println("not updating current transactions inside validate block")
+		infoLog.Println("Validated block is not current block, not updating our mining block")
 	}
 
 	// if valid, return true
@@ -966,13 +959,16 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 			if !m.validateBlock(blockFromStorage) {
 				return nil, false, nil
 			}
+			// need to call this out here even though it is called inside validateBlock() because
+			// it is not called on joins since each block from storage does not meet the "isCurrentBlock" requirements
 			m.generateBlockLedger(*blockFromStorage)
 		}
 	}
 	infoLog.Println("FINAL LEDGER BEFORE DONE JOINING:", m.Ledger)
 
 	lastValidatedBlock := blockFromStorage
-	m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
+	// TODO: does this handle forks?
+	// m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
 
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
