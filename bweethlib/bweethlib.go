@@ -117,7 +117,6 @@ func (b *Bweeth) Post(msg string) error {
 		SignedOperation: signature},
 		&reply)
 	if postErr != nil {
-		log.Println("Bweethlib POST error:", postErr)
 		return postErr
 	}
 	b.notifyCh <- ResultStruct{

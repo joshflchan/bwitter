@@ -86,7 +86,6 @@ type GetExistingChainResp struct {
 }
 
 const OUTPUT_DIR = "out/"
-const NUM_THRESHOLD_BLOCKS = uint8(10)
 
 var (
 	ErrInvalidChain      = errors.New("chain from peer was invalid")
@@ -110,7 +109,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 22
+	m.TargetBits = 21
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -287,10 +286,10 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 
 // RPC Call for client
 func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error {
-	infoLog.Println("POST msg received:", postArgs.PublicKey)
+	infoLog.Println("POST msg received for operation by:", postArgs.PublicKeyString)
 
 	if _, ok := m.PostsSeen[postArgs.PublicKeyString+postArgs.Timestamp]; ok {
-		log.Println("seen")
+		log.Println("POST has already been seen and added to block")
 		return nil
 	} else {
 		m.PostsSeen[postArgs.PublicKeyString+postArgs.Timestamp] = true
@@ -318,18 +317,20 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	// Validate sufficient funds
 	if !m.validateSufficientFunds(transaction, m.CurrLedger) {
 		infoLog.Println("INSUFFICIENT FUNDS: ", m.CurrLedger[transaction.Address])
-		return errors.New("miner does not have sufficient funds for this operation")
+		return ErrInsufficientFunds
 	}
 
 	// Decrement funds
 	m.CurrLedger[transaction.Address]--
-	infoLog.Println("New balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
+	infoLog.Println("new currLedger balance?:", m.CurrLedger[transaction.Address])
+	infoLog.Println("main ledger balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
 
 	// This is what we want so that it gets mined
 	m.MiningBlock.Transactions = append(m.MiningBlock.Transactions, transaction)
 
 	infoLog.Println("tx:", transaction)
-	infoLog.Println("Propagating: ", postArgs)
+	infoLog.Println("txs on the current block being mined:", m.MiningBlock.Transactions)
+
 	var reply util.PostResponse
 retryPeer:
 	for peerAddress, peerConnection := range m.PeersList {
@@ -412,15 +413,18 @@ func (m *Miner) getBlock(hashToFind string) (*MiningBlock, error) {
 // Assumes m.MiningBlock is set externally
 func (m *Miner) mineBlock() {
 	for {
-		var block MiningBlock
+		var minedBlock MiningBlock
 		var hashInteger big.Int
 		// is 32 necessary? maybe to chop off excess
 		var hash [32]byte
 		nonce := int64(0)
+		timestamp := time.Now()
 		for nonce < math.MaxInt64 {
 			m.miningLock.Lock()
+			var block MiningBlock
 			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
-			block.Timestamp = time.Now()
+			block.Timestamp = timestamp
+			block.MinerPublicKey = m.MinerPublicKey
 			block.Nonce = nonce
 			blockBytes := convertBlockToBytes(block)
 			if blockBytes != nil {
@@ -430,6 +434,7 @@ func (m *Miner) mineBlock() {
 				if hashInteger.Cmp(m.Target) == -1 {
 					block.CurrentHash = hex.EncodeToString(hash[:])
 					infoLog.Println("MINED BLOCK: ", block)
+					minedBlock = block
 					m.miningLock.Unlock()
 					break
 				}
@@ -445,11 +450,11 @@ func (m *Miner) mineBlock() {
 			}
 			m.miningLock.Unlock()
 		}
-		m.BlocksSeen[block.CurrentHash] = true
+		m.BlocksSeen[minedBlock.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
-		m.generateBlockLedger(block)
-		m.createNewMiningBlock(block)
-		m.writeNewBlockToStorage(block)
+		m.generateBlockLedger(minedBlock)
+		m.createNewMiningBlock(minedBlock)
+		m.writeNewBlockToStorage(minedBlock)
 
 		// This should be a goroutine that we push channel to ->
 		var reply PropagateResponse
@@ -458,7 +463,7 @@ func (m *Miner) mineBlock() {
 			infoLog.Printf("Propogate block to peer %v", peerAddress)
 
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
+				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: minedBlock}, &reply)
 				if err != nil {
 					infoLog.Println("Error from Miner.PropagateBlock", err)
 				} else {
@@ -489,10 +494,15 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 
 	if val, ok := ledger[block.MinerPublicKey]; ok {
 		infoLog.Println(val)
+		// a miner gets 1 bweeth for mining a block + n bweeth for n transactions on the mined block
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions) + ledger[block.MinerPublicKey]
 	} else {
 		ledger[block.MinerPublicKey] = 1 + len(block.Transactions)
 	}
+
+	infoLog.Println("ledger:", ledger)
+	infoLog.Println("publickey:", block.MinerPublicKey)
+	infoLog.Println("ledger for miner: ", ledger[block.MinerPublicKey])
 
 	for _, tx := range block.Transactions {
 		ledger[tx.Address]--          // NOT for debugging, don't delete
@@ -500,11 +510,13 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 		infoLog.Println("the bal is", bal, ok)
 	}
 
-	m.Ledger[block.CurrentHash] = ledger
+	m.Ledger[block.CurrentHash] = copyMap(ledger)
 
-	// TODO ANALYZE: > or >=
-	if block.SequenceNum >= m.MaxSeqNumSeen && block.PrevHash == m.MiningBlock.PrevHash {
+	if block.SequenceNum == m.MiningBlock.SequenceNum && block.PrevHash == m.MiningBlock.PrevHash {
 		m.CurrLedger = copyMap(ledger)
+		infoLog.Println("copy ledger to currLedger")
+	} else {
+		infoLog.Println("did not copy ledger to currLedger")
 	}
 }
 
@@ -557,7 +569,7 @@ func (m *Miner) getLastBlockHashFromStorage() (string, error) {
 }
 
 func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
-	infoLog.Println("Writing block to storage: ", minedBlock)
+	// infoLog.Println("Writing block to storage: ", minedBlock)
 	if minedBlock.SequenceNum > m.MaxSeqNumSeen {
 		m.MaxSeqNumSeen = minedBlock.SequenceNum
 	}
@@ -642,6 +654,7 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 	if totalTransactions > minedTransactions {
 		copy(missingTransactions, m.MiningBlock.Transactions[totalTransactions-(totalTransactions-minedTransactions):])
 	}
+	infoLog.Println("MissingTransactions in createNewMiningBlock:", missingTransactions)
 	m.MiningBlock = MiningBlock{}
 
 	// What is this stuff?????
@@ -652,8 +665,9 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 	}
 	// shouldnt we update the max now?
 	m.MiningBlock.PrevHash = prevHash
-	m.MiningBlock.MinerPublicKey = m.MinerPublicKey
+	// m.MiningBlock.MinerPublicKey = m.MinerPublicKey --> moved to mineBlock
 	copy(m.MiningBlock.Transactions, missingTransactions)
+	infoLog.Println("New mining blocks transactions:", m.MiningBlock.Transactions)
 }
 
 func convertBlockToBytes(block MiningBlock) []byte {
@@ -722,19 +736,26 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 		ledgerCopy[transaction.Address]--
 	}
 
+	// TODO: PUT LOGS
 	if isCurrentBlock {
 		// update because we passed the checks
 		missingTransactions := []Transaction{}
+		infoLog.Println("current block transactions:", m.MiningBlock.Transactions)
 		for _, transaction := range m.MiningBlock.Transactions {
 			if _, ok := recvdBlockTransactionsSet[transaction]; !ok {
 				missingTransactions = append(missingTransactions, transaction)
 			}
 		}
 		m.MiningBlock = MiningBlock{}
+		infoLog.Println("current block", m.MiningBlock)
 		m.MiningBlock.SequenceNum = block.SequenceNum + 1
 		m.MiningBlock.PrevHash = block.CurrentHash
 		m.MiningBlock.MinerPublicKey = m.MinerPublicKey
+		infoLog.Println("Missing transactions:", missingTransactions)
 		copy(m.MiningBlock.Transactions, missingTransactions)
+		infoLog.Println("current block transactions:", m.MiningBlock.Transactions)
+	} else {
+		infoLog.Println("not updating current transactions inside validate block")
 	}
 
 	// if valid, return true
@@ -767,7 +788,6 @@ func (m *Miner) validatePoW(block *MiningBlock) bool {
 }
 
 func (m *Miner) validateSufficientFunds(transaction Transaction, ledger map[string](int)) bool {
-	infoLog.Println(transaction.Address)
 	infoLog.Println(ledger[transaction.Address])
 	infoLog.Println(ledger[transaction.Address] >= 1)
 	return ledger[transaction.Address] >= 1
@@ -949,7 +969,11 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 			m.generateBlockLedger(*blockFromStorage)
 		}
 	}
+	infoLog.Println("FINAL LEDGER BEFORE DONE JOINING:", m.Ledger)
+
 	lastValidatedBlock := blockFromStorage
+	m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
+
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
 
