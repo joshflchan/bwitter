@@ -841,31 +841,30 @@ func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, do
 		prepTransfer <- true
 		infoLog.Println("Got existing chain from peer: ", peerMiner)
 
-		var (
-			lastValidatedBlock *MiningBlock
-			isValid            bool
-			errFromValidate    error
-		)
 		chainFileToValidate := <-doneTransfer
-		if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
-			infoLog.Println("REJEOIN PROTOCOL: checking for last block hash")
-			lastBlockHash, err := m.getLastBlockHashFromStorage()
-			if err != nil {
-				infoLog.Println("Error from getLastBlockHashFromStorage", err)
-				return err
-			}
-			infoLog.Println("Last block hash to start validating from is:", lastBlockHash)
-			block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, lastBlockHash)
-			lastValidatedBlock = block
-			isValid = validation
-			errFromValidate = err
-		} else {
-			infoLog.Println("JOIN PROTOCOL: validating entire existing chain from peer")
-			block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, "")
-			lastValidatedBlock = block
-			isValid = validation
-			errFromValidate = err
-		}
+		// if _, err := os.Stat(OUTPUT_DIR + m.ChainStorageFile); !os.IsNotExist(err) {
+		// 	infoLog.Println("REJEOIN PROTOCOL: checking for last block hash")
+		// 	lastBlockHash, err := m.getLastBlockHashFromStorage()
+		// 	if err != nil {
+		// 		infoLog.Println("Error from getLastBlockHashFromStorage", err)
+		// 		return err
+		// 	}
+		// 	infoLog.Println("Last block hash to start validating from is:", lastBlockHash)
+		// 	block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, lastBlockHash)
+		// 	lastValidatedBlock = block
+		// 	isValid = validation
+		// 	errFromValidate = err
+		// } else {
+		// 	infoLog.Println("JOIN PROTOCOL: validating entire existing chain from peer")
+		// 	block, validation, err := m.validateExistingChainFromFile(chainFileToValidate, "")
+		// 	lastValidatedBlock = block
+		// 	isValid = validation
+		// 	errFromValidate = err
+		// }
+
+		infoLog.Println("JOIN/REJOIN PROTOCOL: validating entire existing chain from peer")
+		lastValidatedBlock, isValid, errFromValidate := m.validateExistingChainFromFile(chainFileToValidate)
+
 		if errFromValidate == nil && isValid && lastValidatedBlock != nil {
 			infoLog.Println("Chain from peer is valid!", peerMiner)
 			os.Remove(OUTPUT_DIR + m.ChainStorageFile)                    // remove existing chain file
@@ -921,15 +920,7 @@ func (m *Miner) transferBlockchainFile(conn net.Conn, doneTransfer chan string, 
 	doneTransfer <- file.Name()
 }
 
-func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash string) (*MiningBlock, bool, error) {
-	// if not lastBlockHash, then it is an initial join and no need to scan for a matching hash
-	var isLastBlockFound bool
-	if lastBlockHash == "" {
-		isLastBlockFound = true
-	} else {
-		isLastBlockFound = false
-	}
-
+func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bool, error) {
 	src, err := os.Open(filepath)
 	infoLog.Println("validating file at path:", filepath)
 	if err != nil {
@@ -940,6 +931,8 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 	scanner := bufio.NewScanner(src)
 	// Scan() reads next line and returns false when reached end or error
 	var blockFromStorage *MiningBlock
+	largestSeqNumSoFar := 0
+	var lastValidatedBlock *MiningBlock // LAST BLOCK ON LONGEST CHAIN (LARGEST SEQNUM)
 	for scanner.Scan() {
 		// process the line
 		blockLineAsBytes := scanner.Bytes()
@@ -949,27 +942,19 @@ func (m *Miner) validateExistingChainFromFile(filepath string, lastBlockHash str
 			infoLog.Println("error unmarshalling")
 			return nil, false, err
 		}
-		if !isLastBlockFound {
-			if strings.Contains(string(blockLineAsBytes), lastBlockHash) {
-				isLastBlockFound = true
-			}
-			infoLog.Println("loading own block hashes from storage back into memory:", blockFromStorage.CurrentHash)
-			m.BlocksSeen[blockFromStorage.CurrentHash] = true
-		} else {
-			if !m.validateBlock(blockFromStorage) {
-				return nil, false, nil
-			}
-			// need to call this out here even though it is called inside validateBlock() because
-			// it is not called on joins since each block from storage does not meet the "isCurrentBlock" requirements
-			m.generateBlockLedger(*blockFromStorage)
+
+		if !m.validateBlock(blockFromStorage) {
+			return nil, false, nil
+		}
+		m.generateBlockLedger(*blockFromStorage)
+		if blockFromStorage.SequenceNum >= largestSeqNumSoFar {
+			lastValidatedBlock = blockFromStorage
+			largestSeqNumSoFar = blockFromStorage.SequenceNum
 		}
 	}
 	infoLog.Println("FINAL LEDGER BEFORE DONE JOINING:", m.Ledger)
-
-	lastValidatedBlock := blockFromStorage
 	// TODO: does this handle forks?
 	// m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
-
 	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
 }
 
