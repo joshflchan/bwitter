@@ -109,7 +109,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 
 	// Maybe READ TARGET BITS FROM CONFIG, SETS DIFFICULTY?
 	// inspired by gochain
-	m.TargetBits = 21
+	m.TargetBits = 18
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -504,12 +504,12 @@ func (m *Miner) generateBlockLedger(block MiningBlock) {
 
 	m.Ledger[block.CurrentHash] = copyMap(ledger)
 
-	// if block.SequenceNum == m.MiningBlock.SequenceNum && block.PrevHash == m.MiningBlock.PrevHash {
-	m.CurrLedger = copyMap(ledger)
-	// infoLog.Println("copy ledger to currLedger")
-	// } else {
-	// 	infoLog.Println("did not copy ledger to currLedger")
-	// }
+	if block.SequenceNum == m.MiningBlock.SequenceNum && block.PrevHash == m.MiningBlock.PrevHash {
+		m.CurrLedger = copyMap(ledger)
+		infoLog.Println("update current ledger")
+	} else {
+		infoLog.Println("old block, do not update current ledger")
+	}
 }
 
 func copyMap(originalMap map[string]int) map[string]int {
@@ -724,6 +724,7 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 		}
 		ledgerCopy[transaction.Address]--
 	}
+	m.generateBlockLedger(*block)
 
 	if isCurrentBlock {
 		// update because we passed the checks
@@ -733,7 +734,6 @@ func (m *Miner) validateBlock(block *MiningBlock) bool {
 				missingTransactions = append(missingTransactions, transaction)
 			}
 		}
-		m.generateBlockLedger(*block)
 		m.MiningBlock = MiningBlock{}
 		m.MiningBlock.SequenceNum = block.SequenceNum + 1
 		m.MiningBlock.PrevHash = block.CurrentHash
@@ -946,8 +946,8 @@ func (m *Miner) validateExistingChainFromFile(filepath string) (*MiningBlock, bo
 	}
 	infoLog.Println("FINAL LEDGER BEFORE DONE JOINING:", m.Ledger)
 	// TODO: does this handle forks?
-	// m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
-	return lastValidatedBlock, true, scanner.Err() // check if Scan() finished because of error or because it reached end of file
+	m.CurrLedger = copyMap(m.Ledger[lastValidatedBlock.CurrentHash]) // is not handled in generateBlockLedger, so we need this here
+	return lastValidatedBlock, true, scanner.Err()                   // check if Scan() finished because of error or because it reached end of file
 }
 
 func (m *Miner) unmarshalBlock(data []byte, block *MiningBlock) error {
