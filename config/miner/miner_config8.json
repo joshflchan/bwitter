@@ -1,5 +1,5 @@
 {
-    "MinerPublicKeyFile": "keys/miner5.rsa.pub",
+    "MinerPublicKeyFile": "keys/miner8.rsa.pub",
     "CoordAddress": "127.0.0.1:50083",
     "MinerListenAddr": ":6988",
     "ExpectedNumPeers": 5,
