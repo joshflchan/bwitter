@@ -108,7 +108,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	}
 
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 19
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
