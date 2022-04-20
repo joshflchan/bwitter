@@ -12,9 +12,9 @@ import (
 	"cs.ubc.ca/cpsc416/p2/bwitter/bweethlib"
 )
 
-const MINER_ID = "3"
-const MINER_ADDRESS = "127.0.0.1:6983"
-const NUM_TWEETS_TO_POST = 10
+const MINER_ID = "1"
+const MINER_ADDRESS = "127.0.0.1:6508"
+const NUM_TWEETS_TO_POST = 5
 
 func main() {
 	pemString, err := ioutil.ReadFile("keys/miner" + MINER_ID + ".rsa")
@@ -44,7 +44,7 @@ func main() {
 	} else {
 		log.Printf("Posting %v tweets\n", NUM_TWEETS_TO_POST)
 		for i := 0; i < NUM_TWEETS_TO_POST; i++ {
-			err := client.Post(fmt.Sprintf("Client 3 says: tweet #%v...", i+1))
+			err := client.Post(fmt.Sprintf("Client 4 says: tweet #%v...", i+1))
 			if err != nil {
 				log.Println("Failed to POST tweet:", err)
 			} else {
