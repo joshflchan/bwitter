@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 const MINER_ID = "1"
 const MINER_ADDRESS = "127.0.0.1:6508"
+const NUM_TWEETS_TO_POST = 5
 
 func main() {
 	pemString, err := ioutil.ReadFile("keys/miner" + MINER_ID + ".rsa")
@@ -34,18 +37,21 @@ func main() {
 		return
 	}
 
-	tweetsToPost := [3]string{"Client 1 says: hello world", "Client 1 says: tweeting", "Client 1 says: 1 more for fun"} // Intialized with values
-	for i := 0; i < len(tweetsToPost); i++ {
-		err := client.Post(tweetsToPost[i])
-		if err != nil {
-			log.Println("Failed to POST tweet:", err)
-		} else {
-			result := <-notifCh
-			log.Println("POST SENT:", result)
+	getTweetsFlag := flag.String("get", "", "command to view tweets")
+	flag.Parse()
+	if *getTweetsFlag == "tweets" {
+		client.GetTweets()
+	} else {
+		log.Printf("Posting %v tweets\n", NUM_TWEETS_TO_POST)
+		for i := 0; i < NUM_TWEETS_TO_POST; i++ {
+			err := client.Post(fmt.Sprintf("Client 1 says: tweet #%v...", i+1))
+			if err != nil {
+				log.Println("Failed to POST tweet:", err)
+			} else {
+				result := <-notifCh
+				log.Println("POST SENT:", result)
+			}
+			time.Sleep(3 * time.Second)
 		}
-		time.Sleep(10 * time.Second)
 	}
-	time.Sleep(60 * time.Second) // depends on difficulty
-	log.Println("Getting Tweets")
-	client.GetTweets()
 }
