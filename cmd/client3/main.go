@@ -34,14 +34,15 @@ func main() {
 		return
 	}
 
-	client.Post("Client 3 says: hello world")
-	time.Sleep(8 * time.Second)
-	client.Post("Client 3 says: tweeting")
-	time.Sleep(1 * time.Second)
-	client.Post("Client 3 says: 1 more for fun")
-
-	for i := 0; i < 3; i++ {
-		result := <-notifCh
-		log.Println("POST SENT:", result)
+	tweetsToPost := [3]string{"Client 3 says: hello world", "Client 3 says: tweeting", "Client 3 says: 3 more for fun"} // Intialized with values
+	for i := 0; i < len(tweetsToPost); i++ {
+		err := client.Post(tweetsToPost[i])
+		if err != nil {
+			log.Println("Failed to POST tweet:", err)
+		} else {
+			result := <-notifCh
+			log.Println("POST SENT:", result)
+		}
+		time.Sleep(3 * time.Second)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math"
 	"math/big"
 	"math/rand"
 	"net"
@@ -360,38 +359,30 @@ retryPeer:
 // Assumes m.MiningBlock is set externally
 func (m *Miner) mineBlock() {
 	for {
+		time.Sleep(3 * time.Second)
 		var block MiningBlock
 		var hashInteger big.Int
 		// is 32 necessary? maybe to chop off excess
 		var hash [32]byte
-		nonce := int64(0)
-		for nonce < math.MaxInt64 {
-			m.miningLock.Lock()
-			copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
-			block.Nonce = nonce
-			blockBytes := convertBlockToBytes(block)
-			if blockBytes != nil {
-				hash = sha256.Sum256(blockBytes)
-				hashInteger.SetBytes(hash[:])
-				// this will be true if the hash computed has the first m.TargetBits as 0
-				if hashInteger.Cmp(m.Target) == -1 {
-					block.CurrentHash = hex.EncodeToString(hash[:])
-					infoLog.Println("MINED BLOCK: ", block)
-					m.miningLock.Unlock()
-					break
-				}
-
+		// THIS MAKES THE BLOCK INVALID
+		nonce := int64(123123)
+		m.miningLock.Lock()
+		copier.CopyWithOption(&block, &m.MiningBlock, copier.Option{IgnoreEmpty: false, DeepCopy: true})
+		block.Nonce = nonce
+		blockBytes := convertBlockToBytes(block)
+		if blockBytes != nil {
+			hash = sha256.Sum256(blockBytes)
+			hashInteger.SetBytes(hash[:])
+			// this will be true if the hash computed has the first m.TargetBits as 0
+			if hashInteger.Cmp(m.Target) == -1 {
+				block.CurrentHash = hex.EncodeToString(hash[:])
+				infoLog.Println("MINED BLOCK: ", block)
+				m.miningLock.Unlock()
+				break
 			}
-			// unlock here?
-			nonce++
 
-			// if we havent found a nonce, try again from the start
-			// because we might have skipped over it as transactions were changing
-			if nonce == math.MaxInt64 {
-				nonce = 0
-			}
-			m.miningLock.Unlock()
 		}
+		m.miningLock.Unlock()
 		m.BlocksSeen[block.CurrentHash] = true
 		// A) value is now in m.MiningBlock, maybe feed this to a channel that is waiting on it to broadcast to other nodes?
 		m.generateBlockLedger(block)
@@ -405,8 +396,6 @@ func (m *Miner) mineBlock() {
 			infoLog.Printf("Propogate block to peer %v", peerAddress)
 
 			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-				// THIS MAKES THE BLOCK INVALID
-				block.Nonce = 123124
 				err := peerConnection.Call("Miner.PropagateBlock", PropagateArgs{Block: block}, &reply)
 				if err != nil {
 					infoLog.Println("Error from Miner.PropagateBlock", err)
