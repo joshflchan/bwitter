@@ -1,0 +1,16 @@
+{
+    "MinerPublicKeyFile": "keys/miner9.rsa.pub",
+    "CoordAddress": "127.0.0.1:50083",
+    "MinerListenAddr": ":6989",
+    "ExpectedNumPeers": 5,
+    "ChainStorageFile": "chain9.txt",
+    "GenesisBlock": {
+        "SequenceNumber": 0,
+        "MinerPublicKey": "",
+        "Transactions": [],
+        "Nonce": 0,
+        "PrevHash": "",
+        "CurrentHash": ""
+    },
+    "RetryPeerThreshold": 3
+}
