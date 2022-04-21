@@ -163,8 +163,11 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	m.addNewMinerToPeersList(newRequestedPeers)
 	// Maintain peersList
 	go m.maintainPeersList()
-
-	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
+	_, port, err := net.SplitHostPort(m.MinerListenAddr)
+	if err != nil {
+		return err
+	}
+	fileListenAddr, err := util.GetAddressWithUnusedPort(port)
 	if err != nil {
 		infoLog.Println(err)
 		return err
