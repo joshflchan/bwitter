@@ -15,8 +15,7 @@ import (
 type Coord struct {
 	MinerPool map[string]bool
 
-	CoordAddress           string
-	CoordRPCListenAddress  string
+	coordRPCListenAddress  string
 	lostHeartbeatThreshold uint8
 }
 
@@ -31,6 +30,7 @@ func StartCoord(coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 
 	c.MinerPool = make(map[string]bool)
 	c.lostHeartbeatThreshold = lostHeartbeatThreshold
+	c.coordRPCListenAddress = coordRPCListenPort
 
 	log.Println("Coord.Start: registering Coord for RPC")
 	err := rpc.Register(c)
@@ -40,7 +40,8 @@ func StartCoord(coordRPCListenPort string, lostHeartbeatThreshold uint8) error {
 	}
 
 	log.Println("Coord.Start: setting up RPC listener")
-	coordRPCListener, err := net.Listen("tcp", coordRPCListenPort)
+	_, port, err := net.SplitHostPort(coordRPCListenPort)
+	coordRPCListener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Println(coordRPCListenPort)
 		log.Println("failed to listen RPC", err)
@@ -113,7 +114,7 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 }
 
 func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
-	host, _, err := net.SplitHostPort(c.CoordAddress)
+	host, _, err := net.SplitHostPort(c.coordRPCListenAddress)
 	localhost := host + ":"
 	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(localhost)
 	if err != nil {

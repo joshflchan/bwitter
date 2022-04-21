@@ -163,7 +163,7 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	m.addNewMinerToPeersList(newRequestedPeers)
 	// Maintain peersList
 	go m.maintainPeersList()
-	_, port, err := net.SplitHostPort(m.MinerListenAddr)
+	host, port, err := net.SplitHostPort(m.MinerListenAddr)
 	if err != nil {
 		return err
 	}
@@ -180,15 +180,16 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// so we can fill up channel with blocks we miss
 
 	// TODO: REPLACE THIS WITH ADD YOURSELF AS A PEER TO THE NODE THAT GIVE YOU CHAIN.TXT
-	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
+	fCheckAddrForCoord, err := startFCheckListenOnly(":" + port)
 	if err != nil {
 		infoLog.Println("Failed to start fcheck in listen only mode")
 		return err
 	}
 	// Notify Coord of Join
+	_, port, err = net.SplitHostPort(fCheckAddrForCoord)
 	joinArgs := CoordNotifyJoinArgs{
 		IncomingMinerAddr: m.MinerListenAddr,
-		MinerFcheckAddr:   fCheckAddrForCoord,
+		MinerFcheckAddr:   host + ":" + port,
 	}
 	var joinResponse CoordNotifyJoinResponse
 	infoLog.Println("JOIN PROTOCOL: Requesting join")
