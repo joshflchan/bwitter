@@ -833,7 +833,9 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
 	var getChainResp GetExistingChainResp
 	peerRpcClient := m.PeersList[peerMiner]
-	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+	host, _, err := net.SplitHostPort(m.MinerListenAddr)
+	_, port, err := net.SplitHostPort(fileListenAddr)
+	err = peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{host + ":" + port}, &getChainResp)
 	if err != nil {
 		infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
 		return err

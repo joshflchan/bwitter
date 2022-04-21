@@ -113,9 +113,8 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 }
 
 func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
-	// TODO: Test this on azure, basically gets the local address
-	addreses, _ := net.InterfaceAddrs()
-	localhost := addreses[0].(*net.IPNet).IP.To4().String() + ":"
+	host, _, err := net.SplitHostPort(c.CoordAddress)
+	localhost := host + ":"
 	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(localhost)
 	if err != nil {
 		log.Println("Failed to get random port for fcheck hBeatLocalAddr", err)
