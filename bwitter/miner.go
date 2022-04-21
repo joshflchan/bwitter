@@ -167,7 +167,7 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	if err != nil {
 		return err
 	}
-	fileListenAddr, err := util.GetAddressWithUnusedPort(port)
+	fileListenAddr, err := util.GetAddressWithUnusedPort(":" + port)
 	if err != nil {
 		infoLog.Println(err)
 		return err
