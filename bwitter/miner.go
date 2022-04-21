@@ -180,7 +180,7 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// so we can fill up channel with blocks we miss
 
 	// TODO: REPLACE THIS WITH ADD YOURSELF AS A PEER TO THE NODE THAT GIVE YOU CHAIN.TXT
-	fCheckAddrForCoord, err := startFCheckListenOnly(port)
+	fCheckAddrForCoord, err := startFCheckListenOnly(":" + port)
 	if err != nil {
 		infoLog.Println("Failed to start fcheck in listen only mode")
 		return err
