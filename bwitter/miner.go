@@ -130,7 +130,11 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.PostsSeen = make(map[string]bool)
 	m.Ledger = make(map[string]map[string]int)
 
-	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
+	_, port, err := net.SplitHostPort(m.MinerListenAddr)
+	if err != nil {
+		return err
+	}
+	minerListener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return err
 	}
