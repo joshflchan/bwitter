@@ -6,7 +6,6 @@ import (
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -71,6 +70,13 @@ type MiningBlock struct {
 	Timestamp      time.Time
 }
 
+type AddToPeersArgs struct {
+	PeerAddress string
+}
+
+type AddToPeersResponse struct {
+}
+
 type PropagateArgs struct {
 	Block MiningBlock
 }
@@ -108,7 +114,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	}
 
 	// inspired by gochain
-	m.TargetBits = 18
+	m.TargetBits = 21
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -119,7 +125,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.PeersList = make(map[string]*rpc.Client)
 	m.ChainStorageFile = chainStorageFile
 	m.RetryPeerThreshold = retryPeerThreshold
-	m.broadcastChannel = make(chan MiningBlock)
+	m.broadcastChannel = make(chan MiningBlock, 500)
 	m.BlocksSeen = make(map[string]bool)
 	m.PostsSeen = make(map[string]bool)
 	m.Ledger = make(map[string]map[string]int)
@@ -162,6 +168,28 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	doneTransfer := make(chan string, 1)
 	errTransfer := make(chan error, 1)
 	prepTransfer := make(chan bool, 1)
+
+	// Start fcheck to acknowledge heartbeats from Coord and notify Coord of Join before validating chain,
+	// so we can fill up channel with blocks we miss
+
+	// TODO: REPLACE THIS WITH ADD YOURSELF AS A PEER TO THE NODE THAT GIVE YOU CHAIN.TXT
+	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
+	if err != nil {
+		infoLog.Println("Failed to start fcheck in listen only mode")
+		return err
+	}
+	// Notify Coord of Join
+	joinArgs := CoordNotifyJoinArgs{
+		IncomingMinerAddr: m.MinerListenAddr,
+		MinerFcheckAddr:   fCheckAddrForCoord,
+	}
+	var joinResponse CoordNotifyJoinResponse
+	infoLog.Println("JOIN PROTOCOL: Requesting join")
+	err = m.CoordClient.Call("Coord.NotifyJoin", joinArgs, &joinResponse)
+	if err != nil {
+		infoLog.Println("Failed RPC call Coord.NotifyJoin")
+		return err
+	}
 	go m.startFileTransferServer(fileListenAddr, doneTransfer, errTransfer, prepTransfer)
 
 ContinueJoinProtocol:
@@ -201,25 +229,9 @@ ContinueJoinProtocol:
 			break
 		}
 	}
+	// Now that we have validated chain, start going through queue
+	go m.validatePropagatedBlock()
 
-	// Start fcheck to acknowledge heartbeats from Coord before notifying Coord of Join
-	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
-	if err != nil {
-		infoLog.Println("Failed to start fcheck in listen only mode")
-		return err
-	}
-	// Notify Coord of Join
-	joinArgs := CoordNotifyJoinArgs{
-		IncomingMinerAddr: m.MinerListenAddr,
-		MinerFcheckAddr:   fCheckAddrForCoord,
-	}
-	var joinResponse CoordNotifyJoinResponse
-	infoLog.Println("JOIN PROTOCOL: Requesting join")
-	err = m.CoordClient.Call("Coord.NotifyJoin", joinArgs, &joinResponse)
-	if err != nil {
-		infoLog.Println("Failed RPC call Coord.NotifyJoin")
-		return err
-	}
 	infoLog.Println("JOIN PROTOCOL: Join complete!")
 	// Start mining
 	go m.mineBlock()
@@ -277,11 +289,36 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 		} else {
 			infoLog.Println("Adding new miner to peer list:", peer)
 			peerConnection, err := rpc.Dial("tcp", peer)
-			if err == nil {
-				m.PeersList[peer] = peerConnection
+			if err != nil {
+				infoLog.Println("Unable to dial to peer: ", peer)
+				continue
 			}
+			m.PeersList[peer] = peerConnection
+			// Create two-way relationship
+			var response AddToPeersResponse
+			err = peerConnection.Call("Miner.AddToPeersList", &AddToPeersArgs{m.MinerListenAddr}, &response)
+			if err != nil {
+				infoLog.Println("Error from RPC Miner.AddToPeersList: ", err)
+				continue
+			}
+			m.PeersList[peer] = peerConnection
 		}
 	}
+}
+
+func (m *Miner) AddToPeersList(addToPeersArgs *AddToPeersArgs, response *AddToPeersResponse) error {
+	infoLog.Println("ADDING TO PEERS LIST: ", addToPeersArgs)
+	peer := addToPeersArgs.PeerAddress
+	if _, ok := m.PeersList[peer]; !ok {
+		peerConnection, err := rpc.Dial("tcp", peer)
+		if err != nil {
+			infoLog.Println("Found an error :", err)
+			return err
+		}
+		m.PeersList[peer] = peerConnection
+	}
+	infoLog.Println("AddToPeersList m.PeersList: ", m.PeersList)
+	return nil
 }
 
 // RPC Call for client
@@ -553,42 +590,50 @@ func (m *Miner) writeNewBlockToStorage(minedBlock MiningBlock) {
 
 func (m *Miner) PropagateBlock(propagateArgs *PropagateArgs, response *PropagateResponse) error {
 	infoLog.Println("RECEIVED BLOCK FROM PEER: ", propagateArgs)
-
-	if propagateArgs.Block.SequenceNum < m.MaxSeqNumSeen-10 {
-		log.Println("Not propagating this block - too old")
-		return nil
-	}
-
-	if propagateArgs.Block.Transactions == nil {
-		propagateArgs.Block.Transactions = []Transaction{}
-	}
-
-	// Validate the block
-	if !m.validateBlock(&propagateArgs.Block) {
-		log.Println("Not propagating this block")
-		return nil
-	}
-
-	infoLog.Println("Block is successfully validated")
-	m.writeNewBlockToStorage(propagateArgs.Block)
-
-	// Propagate to peers
-	var reply PropagateResponse
-retryPeer:
-	for peerAddress, peerConnection := range m.PeersList {
-		infoLog.Printf("Propogate to peer %v", peerAddress)
-		for i := uint8(0); i < m.RetryPeerThreshold; i++ {
-			err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
-			if err != nil {
-				infoLog.Println("Error from RPC Miner.PropagateBlock", err)
-			} else {
-				continue retryPeer
-			}
-		}
-		m.PeerFailed <- peerAddress
-	}
-
+	m.broadcastChannel <- propagateArgs.Block
 	return nil
+}
+
+func (m *Miner) validatePropagatedBlock() {
+	for {
+		propagatedBlock := <-m.broadcastChannel
+		if propagatedBlock.SequenceNum < m.MaxSeqNumSeen-10 {
+			log.Println("Not propagating this block - too old")
+			continue
+		}
+
+		if propagatedBlock.Transactions == nil {
+			propagatedBlock.Transactions = []Transaction{}
+		}
+
+		// Validate the block
+		if !m.validateBlock(&propagatedBlock) {
+			log.Println("Not propagating this block")
+			continue
+		}
+
+		infoLog.Println("Block is successfully validated")
+		m.writeNewBlockToStorage(propagatedBlock)
+
+		// Propagate to peers
+		var reply PropagateResponse
+		propagateArgs := PropagateArgs{
+			Block: propagatedBlock,
+		}
+	retryPeer:
+		for peerAddress, peerConnection := range m.PeersList {
+			infoLog.Printf("Propogate to peer %v", peerAddress)
+			for i := uint8(0); i < m.RetryPeerThreshold; i++ {
+				err := peerConnection.Call("Miner.PropagateBlock", propagateArgs, &reply)
+				if err != nil {
+					infoLog.Println("Error from RPC Miner.PropagateBlock", err)
+				} else {
+					continue retryPeer
+				}
+			}
+			m.PeerFailed <- peerAddress
+		}
+	}
 }
 
 func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
@@ -616,7 +661,7 @@ func (m *Miner) createNewMiningBlock(minedBlock MiningBlock) {
 
 func convertBlockToBytes(block MiningBlock) []byte {
 	var data bytes.Buffer
-	enc := gob.NewEncoder(&data)
+	enc := json.NewEncoder(&data)
 	err := enc.Encode(block)
 	if err != nil {
 		infoLog.Println(err)
