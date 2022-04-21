@@ -70,6 +70,13 @@ type MiningBlock struct {
 	Timestamp      time.Time
 }
 
+type AddToPeersArgs struct {
+	PeerAddress string
+}
+
+type AddToPeersResponse struct {
+}
+
 type PropagateArgs struct {
 	Block MiningBlock
 }
@@ -107,7 +114,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	}
 
 	// inspired by gochain
-	m.TargetBits = 17
+	m.TargetBits = 21
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -223,7 +230,6 @@ ContinueJoinProtocol:
 		}
 	}
 	// Now that we have validated chain, start going through queue
-	fmt.Println("WE MADE IT")
 	go m.validatePropagatedBlock()
 
 	infoLog.Println("JOIN PROTOCOL: Join complete!")
@@ -283,11 +289,36 @@ func (m *Miner) addNewMinerToPeersList(newRequestedPeers []string) {
 		} else {
 			infoLog.Println("Adding new miner to peer list:", peer)
 			peerConnection, err := rpc.Dial("tcp", peer)
-			if err == nil {
-				m.PeersList[peer] = peerConnection
+			if err != nil {
+				infoLog.Println("Unable to dial to peer: ", peer)
+				continue
 			}
+			m.PeersList[peer] = peerConnection
+			// Create two-way relationship
+			var response AddToPeersResponse
+			err = peerConnection.Call("Miner.AddToPeersList", &AddToPeersArgs{m.MinerListenAddr}, &response)
+			if err != nil {
+				infoLog.Println("Error from RPC Miner.AddToPeersList: ", err)
+				continue
+			}
+			m.PeersList[peer] = peerConnection
 		}
 	}
+}
+
+func (m *Miner) AddToPeersList(addToPeersArgs *AddToPeersArgs, response *AddToPeersResponse) error {
+	infoLog.Println("ADDING TO PEERS LIST: ", addToPeersArgs)
+	peer := addToPeersArgs.PeerAddress
+	if _, ok := m.PeersList[peer]; !ok {
+		peerConnection, err := rpc.Dial("tcp", peer)
+		if err != nil {
+			infoLog.Println("Found an error :", err)
+			return err
+		}
+		m.PeersList[peer] = peerConnection
+	}
+	infoLog.Println("AddToPeersList m.PeersList: ", m.PeersList)
+	return nil
 }
 
 // RPC Call for client
