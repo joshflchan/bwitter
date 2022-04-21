@@ -11,6 +11,7 @@ type PostArgs struct {
 }
 
 type PostResponse struct {
+	TweethRemaining int
 }
 
 type GetTweetsArgs struct {

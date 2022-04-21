@@ -27,7 +27,8 @@ type Bweeth struct {
 type NotifyChannel chan ResultStruct
 
 type ResultStruct struct {
-	txId string // this should be a combination of public key and timestamp
+	txId            string // this should be a combination of public key and timestamp
+	TweethRemaining int
 }
 
 func NewBweeth() *Bweeth {
@@ -120,7 +121,8 @@ func (b *Bweeth) Post(msg string) error {
 		return postErr
 	}
 	b.notifyCh <- ResultStruct{
-		txId: b.PublicKeyString + postTimestamp,
+		txId:            b.PublicKeyString + postTimestamp,
+		TweethRemaining: reply.TweethRemaining,
 	}
 	return nil
 }

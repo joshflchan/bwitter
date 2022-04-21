@@ -114,7 +114,7 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	}
 
 	// inspired by gochain
-	m.TargetBits = 21
+	m.TargetBits = 20
 	m.Target = big.NewInt(1)
 	m.Target.Lsh(m.Target, uint(256-m.TargetBits))
 
@@ -361,6 +361,7 @@ func (m *Miner) Post(postArgs *util.PostArgs, response *util.PostResponse) error
 	m.CurrLedger[transaction.Address]--
 	// infoLog.Println("new currLedger balance?:", m.CurrLedger[transaction.Address])
 	// infoLog.Println("main ledger balance: ", m.Ledger[m.MiningBlock.PrevHash][transaction.Address])
+	response.TweethRemaining = m.CurrLedger[transaction.Address]
 
 	// This is what we want so that it gets mined
 	m.MiningBlock.Transactions = append(m.MiningBlock.Transactions, transaction)
