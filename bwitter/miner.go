@@ -229,7 +229,6 @@ ContinueJoinProtocol:
 			break
 		}
 	}
-
 	// Now that we have validated chain, start going through queue
 	go m.validatePropagatedBlock()
 
