@@ -114,9 +114,7 @@ func (c *Coord) NotifyJoin(args *CoordNotifyJoinArgs, response *CoordNotifyJoinR
 }
 
 func (c *Coord) startFcheck(args *CoordNotifyJoinArgs) error {
-	host, _, err := net.SplitHostPort(c.coordRPCListenAddress)
-	localhost := host + ":"
-	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(localhost)
+	hBeatLocalAddr, err := util.GetAddressWithUnusedPort(":0")
 	if err != nil {
 		log.Println("Failed to get random port for fcheck hBeatLocalAddr", err)
 		return err

@@ -131,7 +131,11 @@ func (m *Miner) Start(publicKey string, coordAddress string, minerListenAddr str
 	m.PostsSeen = make(map[string]bool)
 	m.Ledger = make(map[string]map[string]int)
 
-	minerListener, err := net.Listen("tcp", m.MinerListenAddr)
+	_, port, err := net.SplitHostPort(m.MinerListenAddr)
+	if err != nil {
+		return err
+	}
+	minerListener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		return err
 	}
@@ -160,8 +164,11 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	m.addNewMinerToPeersList(newRequestedPeers)
 	// Maintain peersList
 	go m.maintainPeersList()
-
-	fileListenAddr, err := util.GetAddressWithUnusedPort(m.MinerListenAddr)
+	host, port, err := net.SplitHostPort(m.MinerListenAddr)
+	if err != nil {
+		return err
+	}
+	fileListenAddr, err := util.GetAddressWithUnusedPort(":" + port)
 	if err != nil {
 		infoLog.Println(err)
 		return err
@@ -174,15 +181,16 @@ func (m *Miner) initialJoin(genesisBlock MiningBlock) error {
 	// so we can fill up channel with blocks we miss
 
 	// TODO: REPLACE THIS WITH ADD YOURSELF AS A PEER TO THE NODE THAT GIVE YOU CHAIN.TXT
-	fCheckAddrForCoord, err := startFCheckListenOnly(m.MinerListenAddr)
+	fCheckAddrForCoord, err := startFCheckListenOnly(":" + port)
 	if err != nil {
 		infoLog.Println("Failed to start fcheck in listen only mode")
 		return err
 	}
 	// Notify Coord of Join
+	_, port, err = net.SplitHostPort(fCheckAddrForCoord)
 	joinArgs := coord.CoordNotifyJoinArgs{
 		IncomingMinerAddr: m.MinerListenAddr,
-		MinerFcheckAddr:   fCheckAddrForCoord,
+		MinerFcheckAddr:   host + ":" + port,
 	}
 	var joinResponse coord.CoordNotifyJoinResponse
 	infoLog.Println("JOIN PROTOCOL: Requesting join")
@@ -487,6 +495,7 @@ func (m *Miner) mineBlock() {
 			nonce = 0
 		}
 		m.miningLock.Unlock()
+
 		m.BlocksSeen[minedBlock.CurrentHash] = true
 		m.generateBlockLedger(minedBlock)
 		m.createNewMiningBlock(minedBlock)
@@ -826,7 +835,9 @@ func (m *Miner) GetExistingChainFromPeer(args *GetExistingChainArgs, resp *GetEx
 func (m *Miner) callGetExistingChain(peerMiner string, fileListenAddr string, doneTransfer chan string, errTransfer chan error, prepTransfer chan bool) error {
 	var getChainResp GetExistingChainResp
 	peerRpcClient := m.PeersList[peerMiner]
-	err := peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{fileListenAddr}, &getChainResp)
+	host, _, err := net.SplitHostPort(m.MinerListenAddr)
+	_, port, err := net.SplitHostPort(fileListenAddr)
+	err = peerRpcClient.Call("Miner.GetExistingChainFromPeer", GetExistingChainArgs{host + ":" + port}, &getChainResp)
 	if err != nil {
 		infoLog.Println("Error from RPC Miner.GetExistingChainFromPeer", err)
 		return err
