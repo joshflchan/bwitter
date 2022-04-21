@@ -1,6 +1,6 @@
 {
     "MinerPublicKeyFile": "keys/miner4.rsa.pub",
-    "CoordAddress": "127.0.0.1:50083",
+    "CoordAddress": "20.120.179.186:12332",
     "MinerListenAddr": ":6984",
     "ExpectedNumPeers": 5,
     "ChainStorageFile": "chain4.txt",

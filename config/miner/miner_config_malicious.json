@@ -1,6 +1,6 @@
 {
     "MinerPublicKeyFile": "keys/miner_mal.rsa.pub",
-    "CoordAddress": "127.0.0.1:12332",
+    "CoordAddress": "20.120.179.186:12332",
     "MinerListenAddr": ":1111",
     "ExpectedNumPeers": 2,
     "ChainStorageFile": "chainMal.txt",
